@@ -6,7 +6,8 @@ use epsilon_core::document::{
     Color as DocumentColor, Document, Element, ElementId, ElementKind, TextAlign,
 };
 use epsilon_core::geometry::{
-    Point, Rect, arrowhead_points, constrain_angle, simplify_polyline, smooth_polyline,
+    Point, Rect, ResizeHandle, arrowhead_points, constrain_angle, resize_rect, simplify_polyline,
+    smooth_polyline,
 };
 use epsilon_core::grid;
 use epsilon_core::viewport::Viewport;
@@ -56,6 +57,9 @@ const MIN_TEXT_WIDTH_PIXELS: f64 = 40.0;
 
 /// Extra screen-space radius used when selecting strokes.
 const HIT_TOLERANCE_PIXELS: f64 = 6.0;
+const HANDLE_SIZE_PIXELS: f32 = 8.0;
+const HANDLE_HIT_RADIUS_PIXELS: f32 = 7.0;
+const MIN_ELEMENT_PIXELS: f64 = 8.0;
 
 /// High-level pointer interaction mode for the canvas.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -79,6 +83,15 @@ enum PointerMode {
         start: Point,
         current: Point,
         additive: bool,
+    },
+    /// Moving the current selection from a captured start point.
+    Moving {
+        start: Point,
+        current: Point,
+    },
+    /// Resizing the current selection from one of its eight handles.
+    Resizing {
+        handle: ResizeHandle,
     },
 }
 
@@ -192,6 +205,26 @@ fn world_rect_screen(canvas_rect: egui::Rect, viewport: &Viewport, rect: Rect) -
     )
 }
 
+/// Screen positions of the eight resize handles around a selection.
+fn handle_screen_positions(bounds: egui::Rect) -> [(ResizeHandle, egui::Pos2); 8] {
+    let left = bounds.left();
+    let center_x = bounds.center().x;
+    let right = bounds.right();
+    let top = bounds.top();
+    let center_y = bounds.center().y;
+    let bottom = bounds.bottom();
+    [
+        (ResizeHandle::NorthWest, egui::pos2(left, top)),
+        (ResizeHandle::North, egui::pos2(center_x, top)),
+        (ResizeHandle::NorthEast, egui::pos2(right, top)),
+        (ResizeHandle::East, egui::pos2(right, center_y)),
+        (ResizeHandle::SouthEast, egui::pos2(right, bottom)),
+        (ResizeHandle::South, egui::pos2(center_x, bottom)),
+        (ResizeHandle::SouthWest, egui::pos2(left, bottom)),
+        (ResizeHandle::West, egui::pos2(left, center_y)),
+    ]
+}
+
 fn document_color(color: DocumentColor) -> egui::Color32 {
     egui::Color32::from_rgba_unmultiplied(color.r, color.g, color.b, color.a)
 }
@@ -249,6 +282,10 @@ pub struct EpsilonApp {
     text_editor_needs_focus: bool,
     /// Elements currently selected in the canvas.
     selected: HashSet<ElementId>,
+    /// Snapshots used by move/resize so every frame transforms from the drag
+    /// origin instead of accumulating rounding drift.
+    transform_original: Vec<Element>,
+    resize_start_bounds: Rect,
 }
 
 impl Default for EpsilonApp {
@@ -271,6 +308,8 @@ impl Default for EpsilonApp {
             text_buffer: String::new(),
             text_editor_needs_focus: false,
             selected: HashSet::new(),
+            transform_original: Vec::new(),
+            resize_start_bounds: Rect::default(),
         }
     }
 }
@@ -710,7 +749,9 @@ impl EpsilonApp {
             // release event is visible to this frame.
             PointerMode::Dragging { .. }
             | PointerMode::Freehanding { .. }
-            | PointerMode::Selecting { .. } => {}
+            | PointerMode::Selecting { .. }
+            | PointerMode::Moving { .. }
+            | PointerMode::Resizing { .. } => {}
         }
 
         let panning = matches!(self.pointer_mode, PointerMode::Panning { .. });
@@ -820,6 +861,106 @@ impl EpsilonApp {
         }
     }
 
+    fn selected_snapshots(&self) -> Vec<Element> {
+        self.document
+            .elements
+            .iter()
+            .filter(|element| self.selected.contains(&element.id))
+            .cloned()
+            .collect()
+    }
+
+    fn selection_bounds(&self) -> Option<Rect> {
+        self.document
+            .elements
+            .iter()
+            .filter(|element| self.selected.contains(&element.id))
+            .map(Element::world_bounds)
+            .reduce(|left, right| left.union(&right))
+    }
+
+    fn resize_handle_at(
+        &self,
+        pointer: egui::Pos2,
+        canvas_rect: egui::Rect,
+    ) -> Option<ResizeHandle> {
+        let bounds = world_rect_screen(canvas_rect, &self.viewport, self.selection_bounds()?);
+        handle_screen_positions(bounds)
+            .into_iter()
+            .find(|(_, position)| position.distance(pointer) <= HANDLE_HIT_RADIUS_PIXELS)
+            .map(|(handle, _)| handle)
+    }
+
+    fn apply_move_delta(&mut self, delta: Point) {
+        for original in &self.transform_original {
+            if let Some(element) = self
+                .document
+                .elements
+                .iter_mut()
+                .find(|element| element.id == original.id)
+            {
+                *element = original.translated(delta);
+            }
+        }
+    }
+
+    fn apply_resize_to(&mut self, bounds: Rect) {
+        for original in &self.transform_original {
+            if let Some(element) = self
+                .document
+                .elements
+                .iter_mut()
+                .find(|element| element.id == original.id)
+            {
+                *element = original.scaled_from(self.resize_start_bounds, bounds);
+            }
+        }
+    }
+
+    /// Applies an active move or resize drag from captured snapshots.
+    fn update_transform(&mut self, ctx: &egui::Context, canvas_rect: egui::Rect) {
+        let primary_down = ctx.input(|input| input.pointer.primary_down());
+        let shift_down = ctx.input(|input| input.modifiers.shift);
+        let alt_down = ctx.input(|input| input.modifiers.alt);
+        let pointer = ctx.pointer_hover_pos();
+
+        match self.pointer_mode {
+            PointerMode::Moving { start, current } => {
+                let current = pointer
+                    .map(|pos| self.screen_to_world(canvas_rect, pos))
+                    .unwrap_or(current);
+                if primary_down {
+                    self.apply_move_delta(current - start);
+                    self.pointer_mode = PointerMode::Moving { start, current };
+                } else {
+                    self.pointer_mode = PointerMode::Idle;
+                    self.transform_original.clear();
+                }
+            }
+            PointerMode::Resizing { handle } => {
+                if primary_down {
+                    if let Some(pointer) = pointer {
+                        let world = self.screen_to_world(canvas_rect, pointer);
+                        let bounds = resize_rect(
+                            self.resize_start_bounds,
+                            handle,
+                            world,
+                            alt_down,
+                            shift_down,
+                            MIN_ELEMENT_PIXELS / self.viewport.zoom,
+                        );
+                        self.apply_resize_to(bounds);
+                    }
+                    self.pointer_mode = PointerMode::Resizing { handle };
+                } else {
+                    self.pointer_mode = PointerMode::Idle;
+                    self.transform_original.clear();
+                }
+            }
+            _ => {}
+        }
+    }
+
     /// Handles topmost click selection, shift-toggle and marquee selection.
     fn update_selection(&mut self, ctx: &egui::Context, canvas_rect: egui::Rect) {
         let pointer_pos = ctx.pointer_hover_pos();
@@ -871,7 +1012,17 @@ impl EpsilonApp {
             return;
         }
 
-        let world = self.screen_to_world(canvas_rect, pointer_pos.expect("checked above"));
+        let pointer = pointer_pos.expect("checked above");
+        if let Some(handle) = self.resize_handle_at(pointer, canvas_rect)
+            && let Some(bounds) = self.selection_bounds()
+        {
+            self.transform_original = self.selected_snapshots();
+            self.resize_start_bounds = bounds;
+            self.pointer_mode = PointerMode::Resizing { handle };
+            return;
+        }
+
+        let world = self.screen_to_world(canvas_rect, pointer);
         let tolerance = HIT_TOLERANCE_PIXELS / self.viewport.zoom;
         let hit = self
             .document
@@ -882,8 +1033,20 @@ impl EpsilonApp {
             .map(|element| element.id);
 
         if let Some(id) = hit {
-            self.toggle_selected(id, shift_down);
-            self.pointer_mode = PointerMode::Idle;
+            if shift_down {
+                self.toggle_selected(id, true);
+                self.pointer_mode = PointerMode::Idle;
+            } else {
+                if !self.selected.contains(&id) {
+                    self.selected.clear();
+                    self.selected.insert(id);
+                }
+                self.transform_original = self.selected_snapshots();
+                self.pointer_mode = PointerMode::Moving {
+                    start: world,
+                    current: world,
+                };
+            }
         } else {
             if !shift_down {
                 self.selected.clear();
@@ -923,6 +1086,15 @@ impl EpsilonApp {
                     egui::Stroke::new(1.5, accent),
                     egui::StrokeKind::Outside,
                 );
+            }
+        }
+
+        if let Some(bounds) = self.selection_bounds() {
+            let screen = world_rect_screen(canvas_rect, &self.viewport, bounds);
+            for (_, position) in handle_screen_positions(screen) {
+                let handle =
+                    egui::Rect::from_center_size(position, egui::Vec2::splat(HANDLE_SIZE_PIXELS));
+                painter.rect_filled(handle, 1.0, accent);
             }
         }
 
@@ -1390,6 +1562,7 @@ impl EpsilonApp {
                     self.update_pan(ui.ctx(), rect);
                     self.update_zoom(ui.ctx(), rect);
                     self.update_drawing(ui.ctx(), rect);
+                    self.update_transform(ui.ctx(), rect);
                     self.update_selection(ui.ctx(), rect);
                 }
 
@@ -1833,6 +2006,64 @@ mod tests {
             drawing_end(ElementKind::Arrow, start, end, true),
             constrained
         );
+    }
+
+    #[test]
+    fn moving_selection_translates_all_selected_geometry() {
+        let mut app = EpsilonApp::default();
+        let rectangle =
+            app.document
+                .add(Element::new(ElementKind::Rectangle, 10.0, 20.0, 40.0, 30.0));
+        let line = app
+            .document
+            .add(Element::line(Point::new(0.0, 0.0), Point::new(10.0, 5.0)));
+        app.selected.extend([rectangle, line]);
+        app.transform_original = app.selected_snapshots();
+
+        app.apply_move_delta(Point::new(7.0, -3.0));
+
+        let rectangle = app.document.element(rectangle).expect("rectangle");
+        assert_eq!((rectangle.x, rectangle.y), (17.0, 17.0));
+        let line = app.document.element(line).expect("line");
+        assert_eq!(line.points[0], Point::new(7.0, -3.0));
+        assert_eq!(line.points[1], Point::new(17.0, 2.0));
+    }
+
+    #[test]
+    fn resizing_selection_scales_multiple_elements_from_snapshots() {
+        let mut app = EpsilonApp::default();
+        let first = app
+            .document
+            .add(Element::new(ElementKind::Rectangle, 0.0, 0.0, 100.0, 50.0));
+        let second = app.document.add(Element::new(
+            ElementKind::Rectangle,
+            100.0,
+            0.0,
+            100.0,
+            50.0,
+        ));
+        app.selected.extend([first, second]);
+        app.transform_original = app.selected_snapshots();
+        app.resize_start_bounds = app.selection_bounds().expect("selected bounds");
+
+        app.apply_resize_to(Rect::from_xywh(0.0, 0.0, 400.0, 100.0));
+
+        let first = app.document.element(first).expect("first");
+        assert_eq!((first.width, first.height), (200.0, 100.0));
+        let second = app.document.element(second).expect("second");
+        assert_eq!(second.x, 200.0);
+        assert_eq!((second.width, second.height), (200.0, 100.0));
+    }
+
+    #[test]
+    fn selection_handles_are_eight_screen_points() {
+        let bounds = egui::Rect::from_min_size(egui::pos2(10.0, 20.0), egui::vec2(100.0, 50.0));
+        let handles = handle_screen_positions(bounds);
+        assert_eq!(handles.len(), 8);
+        assert_eq!(handles[0].0, ResizeHandle::NorthWest);
+        assert_eq!(handles[0].1, egui::pos2(10.0, 20.0));
+        assert_eq!(handles[4].0, ResizeHandle::SouthEast);
+        assert_eq!(handles[4].1, egui::pos2(110.0, 70.0));
     }
 
     #[test]

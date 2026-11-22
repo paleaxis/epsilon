@@ -575,3 +575,21 @@ world units at the current zoom.
 **Consequences.** Rotation handling is shared and does not require duplicating
 shape math for transformed coordinates. Selection feels consistent across zoom
 levels, and filled versus outlined behavior is explicit and testable.
+
+---
+
+## D-032 — Move/resize transforms start from drag snapshots (2026-11-23)
+
+**Context.** Task 3.10 requires multi-element resizing without drift and with
+screen-space handles that work at any zoom.
+
+**Decision.** A drag captures clones of the selected elements and the starting
+selection bounds. Every frame computes the full transform from those snapshots:
+moves add a world delta, and resizes map the captured geometry from the start
+bounds into the new bounds returned by `resize_rect`. Handles are drawn and hit
+tested in screen space, with the resize minimum converted from 8 screen pixels
+to world units. Shift preserves corner aspect, Alt mirrors around the center.
+
+**Consequences.** Continuous drags cannot accumulate floating-point drift, all
+selected elements share one transform, and handle size/hit areas stay usable
+across 10%–1000% zoom. Rotation remains a separate transform in task 3.11.

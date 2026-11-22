@@ -226,6 +226,154 @@ impl Rect {
     }
 }
 
+/// The eight resize handles around a selection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResizeHandle {
+    NorthWest,
+    North,
+    NorthEast,
+    East,
+    SouthEast,
+    South,
+    SouthWest,
+    West,
+}
+
+impl ResizeHandle {
+    pub const ALL: [Self; 8] = [
+        Self::NorthWest,
+        Self::North,
+        Self::NorthEast,
+        Self::East,
+        Self::SouthEast,
+        Self::South,
+        Self::SouthWest,
+        Self::West,
+    ];
+
+    pub fn moves_x(self) -> bool {
+        matches!(
+            self,
+            Self::NorthWest
+                | Self::NorthEast
+                | Self::East
+                | Self::SouthEast
+                | Self::SouthWest
+                | Self::West
+        )
+    }
+
+    pub fn moves_y(self) -> bool {
+        matches!(
+            self,
+            Self::NorthWest
+                | Self::North
+                | Self::NorthEast
+                | Self::SouthEast
+                | Self::South
+                | Self::SouthWest
+        )
+    }
+}
+
+/// Computes resized bounds from a drag. `from_center` mirrors both sides of
+/// the selection around its center; `preserve_aspect` scales corner handles
+/// uniformly; `min_size` prevents either dimension from collapsing.
+pub fn resize_rect(
+    start: Rect,
+    handle: ResizeHandle,
+    pointer: Point,
+    from_center: bool,
+    preserve_aspect: bool,
+    min_size: f64,
+) -> Rect {
+    let min_size = min_size.max(0.0);
+    if from_center {
+        let center = start.center();
+        let half_width = if handle.moves_x() {
+            ((pointer.x - center.x).abs()).max(min_size * 0.5)
+        } else {
+            start.width() * 0.5
+        };
+        let half_height = if handle.moves_y() {
+            ((pointer.y - center.y).abs()).max(min_size * 0.5)
+        } else {
+            start.height() * 0.5
+        };
+        return Rect::from_corners(
+            Point::new(center.x - half_width, center.y - half_height),
+            Point::new(center.x + half_width, center.y + half_height),
+        );
+    }
+
+    let mut min = start.min;
+    let mut max = start.max;
+    if handle.moves_x() {
+        if matches!(
+            handle,
+            ResizeHandle::West | ResizeHandle::NorthWest | ResizeHandle::SouthWest
+        ) {
+            min.x = pointer.x.min(max.x - min_size);
+        } else {
+            max.x = pointer.x.max(min.x + min_size);
+        }
+    }
+    if handle.moves_y() {
+        if matches!(
+            handle,
+            ResizeHandle::North | ResizeHandle::NorthWest | ResizeHandle::NorthEast
+        ) {
+            min.y = pointer.y.min(max.y - min_size);
+        } else {
+            max.y = pointer.y.max(min.y + min_size);
+        }
+    }
+    let mut result = Rect::from_corners(min, max);
+
+    let is_corner = handle.moves_x() && handle.moves_y();
+    if preserve_aspect && is_corner && start.width() > f64::EPSILON && start.height() > f64::EPSILON
+    {
+        let scale_x = result.width() / start.width();
+        let scale_y = result.height() / start.height();
+        let scale = if (scale_x - 1.0).abs() >= (scale_y - 1.0).abs() {
+            scale_x
+        } else {
+            scale_y
+        };
+        let scale = scale
+            .max(min_size / start.width())
+            .max(min_size / start.height());
+        let width = start.width() * scale;
+        let height = start.height() * scale;
+        let anchor = match handle {
+            ResizeHandle::NorthWest => start.max,
+            ResizeHandle::NorthEast => Point::new(start.min.x, start.max.y),
+            ResizeHandle::SouthEast => start.min,
+            ResizeHandle::SouthWest => Point::new(start.max.x, start.min.y),
+            _ => result.center(),
+        };
+        result = match handle {
+            ResizeHandle::NorthWest => {
+                Rect::from_corners(anchor - Point::new(width, height), anchor)
+            }
+            ResizeHandle::NorthEast => Rect::from_corners(
+                Point::new(anchor.x, anchor.y - height),
+                Point::new(anchor.x + width, anchor.y),
+            ),
+            ResizeHandle::SouthEast => {
+                Rect::from_corners(anchor, anchor + Point::new(width, height))
+            }
+            ResizeHandle::SouthWest => Rect::from_corners(
+                Point::new(anchor.x - width, anchor.y),
+                Point::new(anchor.x, anchor.y + height),
+            ),
+            _ => result,
+        };
+    }
+
+    result
+}
+
 /// Rotates `point` around `center` by `angle` radians. Positive angles are
 /// clockwise in the y-down world convention.
 pub fn rotate_point(point: Point, center: Point, angle: f64) -> Point {
@@ -570,6 +718,59 @@ mod tests {
             0.0
         ));
         assert!(approx(distance_to_segment(start, start, start), 0.0));
+    }
+
+    #[test]
+    fn resize_rect_moves_edges_and_clamps_minimum() {
+        let start = Rect::from_xywh(10.0, 20.0, 100.0, 80.0);
+        let resized = resize_rect(
+            start,
+            ResizeHandle::NorthWest,
+            Point::new(40.0, 50.0),
+            false,
+            false,
+            5.0,
+        );
+        assert_eq!(resized.min, Point::new(40.0, 50.0));
+        assert_eq!(resized.max, Point::new(110.0, 100.0));
+
+        let clamped = resize_rect(
+            start,
+            ResizeHandle::East,
+            Point::new(-100.0, 0.0),
+            false,
+            false,
+            5.0,
+        );
+        assert!(approx(clamped.width(), 5.0));
+        assert_eq!(clamped.height(), start.height());
+    }
+
+    #[test]
+    fn resize_rect_centers_and_preserves_aspect() {
+        let start = Rect::from_xywh(0.0, 0.0, 100.0, 50.0);
+        let centered = resize_rect(
+            start,
+            ResizeHandle::SouthEast,
+            Point::new(130.0, 85.0),
+            true,
+            false,
+            5.0,
+        );
+        assert_eq!(centered.center(), start.center());
+        assert!(approx(centered.width(), 160.0));
+        assert!(approx(centered.height(), 120.0));
+
+        let uniform = resize_rect(
+            start,
+            ResizeHandle::SouthEast,
+            Point::new(200.0, 60.0),
+            false,
+            true,
+            5.0,
+        );
+        assert!(approx(uniform.width() / uniform.height(), 2.0));
+        assert!(approx(uniform.width(), 200.0));
     }
 
     #[test]

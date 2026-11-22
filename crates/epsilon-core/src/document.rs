@@ -289,6 +289,51 @@ impl Element {
         .unwrap_or(bounds)
     }
 
+    /// Returns a translated copy of this element, including its world points.
+    pub fn translated(&self, delta: Point) -> Self {
+        let mut translated = self.clone();
+        translated.x += delta.x;
+        translated.y += delta.y;
+        for point in &mut translated.points {
+            *point += delta;
+        }
+        translated
+    }
+
+    /// Returns a copy scaled from one bounds rectangle into another.
+    pub fn scaled_from(&self, from: Rect, to: Rect) -> Self {
+        let scale_x = if from.width() > f64::EPSILON {
+            to.width() / from.width()
+        } else {
+            1.0
+        };
+        let scale_y = if from.height() > f64::EPSILON {
+            to.height() / from.height()
+        } else {
+            1.0
+        };
+
+        let mut scaled = self.clone();
+        scaled.x = to.min.x + (self.x - from.min.x) * scale_x;
+        scaled.y = to.min.y + (self.y - from.min.y) * scale_y;
+        scaled.width = self.width * scale_x;
+        scaled.height = self.height * scale_y;
+        scaled.points = self
+            .points
+            .iter()
+            .map(|point| {
+                Point::new(
+                    to.min.x + (point.x - from.min.x) * scale_x,
+                    to.min.y + (point.y - from.min.y) * scale_y,
+                )
+            })
+            .collect();
+        if self.kind == ElementKind::Text {
+            scaled.font_size = (self.font_size * scale_y).max(1.0);
+        }
+        scaled
+    }
+
     /// Hit test in world space, with rotation and a caller-supplied tolerance.
     /// Transparent fills only respond near their stroke; filled shapes respond
     /// anywhere inside.
@@ -612,6 +657,36 @@ mod tests {
         let text = Element::text(0.0, 0.0, 100.0, 20.0);
         assert!(text.hit_test(Point::new(50.0, 10.0), 1.0));
         assert!(!text.hit_test(Point::new(150.0, 10.0), 1.0));
+    }
+
+    #[test]
+    fn translation_moves_bounds_and_world_points() {
+        let line = Element::line(Point::new(0.0, 0.0), Point::new(10.0, 5.0));
+        let moved = line.translated(Point::new(7.0, -3.0));
+        assert_eq!(moved.x, 7.0);
+        assert_eq!(moved.y, -3.0);
+        assert_eq!(
+            moved.points,
+            vec![Point::new(7.0, -3.0), Point::new(17.0, 2.0)]
+        );
+    }
+
+    #[test]
+    fn scaling_maps_geometry_without_drift() {
+        let mut text = Element::text(10.0, 20.0, 100.0, 20.0);
+        text.text = "Hello".to_owned();
+        let from = text.bounds();
+        let to = Rect::from_xywh(20.0, 40.0, 200.0, 50.0);
+        let scaled = text.scaled_from(from, to);
+        assert_eq!(scaled.bounds(), to);
+        assert_eq!(scaled.font_size, 40.0);
+
+        let restored = scaled.scaled_from(to, from);
+        assert!((restored.x - text.x).abs() < 1e-9);
+        assert!((restored.y - text.y).abs() < 1e-9);
+        assert!((restored.width - text.width).abs() < 1e-9);
+        assert!((restored.height - text.height).abs() < 1e-9);
+        assert!((restored.font_size - text.font_size).abs() < 1e-9);
     }
 
     #[test]

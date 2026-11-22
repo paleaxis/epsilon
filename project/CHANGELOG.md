@@ -4,6 +4,12 @@ Notable changes, newest first. Version sections are added at release time.
 
 ## [Unreleased]
 
+### Added — 2026-11-23 (task 3.10)
+
+- Move and eight-handle resize for selections, including multi-element
+  transforms, Shift aspect lock, Alt-from-center and minimum size.
+- Screen-space selection handles and drift-free transform snapshots.
+
 ### Added — 2026-11-23 (task 3.9)
 
 - Selection tool with topmost hit testing, shift-toggle, marquee selection and

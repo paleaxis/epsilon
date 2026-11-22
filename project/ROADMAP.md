@@ -354,13 +354,20 @@ filled interiors and rotation. The Select tool picks the topmost hit, supports
 additive toggling and captures an intersecting marquee, with selection outlines
 painted in screen space.
 
-### [ ] 3.10 — Move and resize
+### [x] 3.10 — Move and resize
 
 Dragging selected elements, 8-handle resize (with aspect/shift constraint),
 multi-element resize, Alt-from-center; handles rendered in screen space.
 
 Acceptance: transform math unit-tested; no drift after repeated resizes; minimum
 size enforced.
+
+Completed 2026-11-23: selected elements move by world-space pointer deltas and
+resize from eight screen-space handles. Resize math handles edge/corner anchors,
+Shift aspect lock, Alt centering and minimum size; multi-element transforms are
+recomputed from drag-start snapshots each frame to avoid accumulated drift.
+Core tests cover resize bounds and scaling round trips, and app tests cover
+multi-element move, multi-element resize and handle placement.
 
 ### [ ] 3.11 — Rotation
 
