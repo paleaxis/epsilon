@@ -4,6 +4,15 @@ Notable changes, newest first. Version sections are added at release time.
 
 ## [Unreleased]
 
+### Added — 2026-11-22 (task 1.3)
+
+- Tool model with nine tools: Select, Hand, Rectangle, Ellipse, Diamond, Line,
+  Arrow, Freehand and Text.
+- Left tool rail with 20×20 vector icons painted from theme colors, selected and
+  hover states, tooltips with shortcut hints, and accessible button info.
+- Single-key tool shortcuts (V, H, R, O, D, L, A, P, T) that ignore modified
+  keys and defer to focused text input; shortcut mapping and uniqueness tested.
+
 ### Added — 2026-11-22 (task 1.2)
 
 - Dark and light themes driven by a central semantic palette in `theme.rs`.

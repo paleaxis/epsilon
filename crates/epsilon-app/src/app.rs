@@ -2,16 +2,18 @@ use eframe::egui::{self, Align, Layout, RichText};
 
 use crate::layout;
 use crate::theme::{self, Theme};
+use crate::tools::{self, Tool};
 
 /// Root application object and native shell.
 ///
-/// This is the Stage 1 layout skeleton: regions are laid out and sized, while
-/// their interactive content is filled in by later tasks (tool palette 1.3,
-/// menus/toolbar 1.4, properties 1.5, status readouts 1.6).
+/// This is the Stage 1 shell: regions are laid out and themed, with the tool
+/// palette active. Menus/toolbar (1.4), properties (1.5) and live status
+/// readouts (1.6) are filled in by later tasks.
 #[derive(Default)]
 pub struct EpsilonApp {
     about_open: bool,
     theme: Theme,
+    tool: Tool,
 }
 
 impl EpsilonApp {
@@ -68,16 +70,54 @@ impl EpsilonApp {
             });
     }
 
-    fn tool_panel(&self, ui: &mut egui::Ui) {
+    fn tool_panel(&mut self, ui: &mut egui::Ui) {
         egui::Panel::left("tool_panel")
             .resizable(false)
             .exact_size(layout::TOOL_RAIL_WIDTH)
             .show(ui, |ui| {
-                ui.add_space(6.0);
+                ui.add_space(4.0);
                 ui.vertical_centered(|ui| {
                     ui.label(RichText::new("TOOLS").small().strong());
                 });
+                ui.add_space(4.0);
+
+                for tool in Tool::ALL {
+                    let selected = self.tool == tool;
+                    let clicked = ui
+                        .vertical_centered(|ui| tools::tool_button(ui, tool, selected).clicked())
+                        .inner;
+                    if clicked {
+                        self.tool = tool;
+                    }
+                    ui.add_space(2.0);
+                }
             });
+    }
+
+    /// Applies single-key tool shortcuts, unless a widget currently owns
+    /// keyboard input (a text field, for example).
+    fn handle_shortcuts(&mut self, ctx: &egui::Context) {
+        if ctx.egui_wants_keyboard_input() {
+            return;
+        }
+
+        let shortcut = ctx.input(|input| {
+            input.events.iter().find_map(|event| match event {
+                egui::Event::Key {
+                    key,
+                    pressed: true,
+                    modifiers,
+                    ..
+                } if !modifiers.ctrl && !modifiers.alt && !modifiers.command => {
+                    Tool::from_key(*key)
+                }
+                _ => None,
+            })
+        });
+
+        if let Some(tool) = shortcut {
+            self.tool = tool;
+        }
     }
 
     fn properties_panel(&self, ui: &mut egui::Ui) {
@@ -163,6 +203,7 @@ impl EpsilonApp {
 
 impl eframe::App for EpsilonApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        self.handle_shortcuts(ui.ctx());
         let _canvas_rect = self.show_shell(ui);
         self.about_window(ui.ctx());
     }
@@ -252,6 +293,52 @@ mod tests {
         app.set_theme(&ctx, Theme::Dark);
         assert_eq!(app.theme, Theme::Dark);
         assert!(ctx.style_of(egui::Theme::Dark).visuals.dark_mode);
+    }
+
+    fn run_shortcut(app: &mut EpsilonApp, key: egui::Key, modifiers: egui::Modifiers) {
+        let ctx = egui::Context::default();
+        let input = egui::RawInput {
+            events: vec![egui::Event::Key {
+                key,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers,
+            }],
+            ..Default::default()
+        };
+        let output = ctx.run_ui(input, |ui| app.handle_shortcuts(ui.ctx()));
+        output.drop_without_applying_deltas();
+    }
+
+    #[test]
+    fn keyboard_shortcuts_select_tools() {
+        let mut app = EpsilonApp::default();
+
+        run_shortcut(&mut app, egui::Key::R, egui::Modifiers::default());
+        assert_eq!(app.tool, Tool::Rectangle);
+
+        run_shortcut(&mut app, egui::Key::T, egui::Modifiers::default());
+        assert_eq!(app.tool, Tool::Text);
+
+        run_shortcut(&mut app, egui::Key::V, egui::Modifiers::default());
+        assert_eq!(app.tool, Tool::Select);
+    }
+
+    #[test]
+    fn modified_keys_do_not_change_tools() {
+        let mut app = EpsilonApp {
+            tool: Tool::Hand,
+            ..Default::default()
+        };
+
+        let ctrl = egui::Modifiers {
+            ctrl: true,
+            command: true,
+            ..Default::default()
+        };
+        run_shortcut(&mut app, egui::Key::R, ctrl);
+        assert_eq!(app.tool, Tool::Hand);
     }
 
     #[test]

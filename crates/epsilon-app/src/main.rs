@@ -3,6 +3,7 @@
 mod app;
 mod layout;
 mod theme;
+mod tools;
 
 fn main() -> eframe::Result {
     let options = eframe::NativeOptions {

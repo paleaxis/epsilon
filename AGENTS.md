@@ -53,6 +53,9 @@ that is explicitly out of scope until the whiteboard is genuinely usable.
 - All UI colors come from `epsilon-app/src/theme.rs`. Widgets read
   `egui::Visuals`; do not hard-code `Color32` values in shell/widget code. Keep
   the palette contrast tests passing when changing colors.
+- Tool icons are vector paths painted in `tools.rs`. Do not add an icon font or
+  image-asset dependency; new tools need an enum variant, shortcut, icon and
+  tests.
 - Comments explain *why*, not *what*. Do not leave dead code, stub UIs, or
   placeholder features presented as complete.
 

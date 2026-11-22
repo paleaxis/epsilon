@@ -216,3 +216,24 @@ theme is dark. Contrast is enforced by tests: primary text ≥ 7:1 and weak text
 theme means adding one `Palette` value. The theme is not persisted yet (task 1.8),
 so every launch starts dark. Alpha-blended accent colours were avoided so the
 contrast tests stay meaningful.
+
+---
+
+## D-012 — Painted tool icons; tools are UI state only until Stage 3 (2026-11-22)
+
+**Context.** The tool palette needs recognizable icons without shipping image
+assets, and the bundled fonts cannot be assumed to cover shape glyphs. Drawing
+behavior belongs to Stage 3, so tool selection must not imply working tools.
+
+**Decision.** `tools.rs` defines `Tool::{Select, Hand, Rectangle, Ellipse,
+Diamond, Line, Arrow, Freehand, Text}` with shortcut letters V/H/R/O/D/L/A/P/T.
+Icons are drawn as 20×20 vector paths with `egui::Painter` from the active
+theme's foreground color, so there is no icon-font or image-asset dependency and
+no glyph-coverage risk. Buttons are 40×34, which fits all nine above the canvas
+at the 720×480 minimum window. Shortcuts fire only for unmodified key presses and
+are skipped while `Context::egui_wants_keyboard_input()` is true (text editing).
+Selecting a tool only updates `EpsilonApp::tool`; Stage 3 will consume it.
+
+**Consequences.** Adding a tool requires an enum variant, a shortcut, an icon
+arm and tests; no external assets. Painted icons have no automated visual
+regression test — layout and launch checks only — until manual review.

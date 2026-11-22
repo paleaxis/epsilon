@@ -7,7 +7,7 @@
 /// Minimum inner window size (logical points), enforced by the native window.
 pub const MIN_WINDOW_SIZE: [f32; 2] = [720.0, 480.0];
 
-/// Left tool rail (fixed width; tool buttons arrive in task 1.3).
+/// Left tool rail (fixed width).
 pub const TOOL_RAIL_WIDTH: f32 = 64.0;
 
 /// Right properties panel initial width.

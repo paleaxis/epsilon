@@ -54,7 +54,7 @@ Completed 2026-11-22: semantic dark/light palettes in `theme.rs` applied via an
 explicit `ThemePreference`; View → Dark mode toggle; contrast tests (7:1 primary,
 4.5:1 weak); headless shell layout verified in both themes; native launch alive.
 
-### [ ] 1.3 — Tool model and left tool panel
+### [x] 1.3 — Tool model and left tool panel
 
 `Tool` enum (select, hand, rectangle, ellipse, diamond, line, arrow, freehand,
 text), active-tool state, icon/label buttons with tooltips and shortcut hints,
@@ -62,6 +62,10 @@ single-key shortcuts (V, H, R, O, D, L, A, P, T).
 
 Acceptance: click or key selects exactly one tool; panel reflects state; unit
 test for shortcut→tool mapping; no fake tool behavior beyond state selection.
+
+Completed 2026-11-22: nine tools with painted vector icons, tooltips, selected
+state and accessible names; plain-key shortcuts handled unless a widget owns the
+keyboard; shortcut mapping and uniqueness tested. Drawing remains Stage 3.
 
 ### [ ] 1.4 — Menus and top toolbar
 

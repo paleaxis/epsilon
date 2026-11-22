@@ -2,16 +2,16 @@
 
 Last updated: 2026-11-22
 Current stage: **Stage 1 — Native desktop shell**
-Last completed task: **1.2 — Theme system (dark / light)**
-Next task: **1.3 — Tool model and left tool panel**
+Last completed task: **1.3 — Tool model and left tool panel**
+Next task: **1.4 — Menus and top toolbar**
 
 ## Status
 
-The native shell is laid out and themed: menu bar, top toolbar, left tool rail,
-canvas region, right properties panel and status bar all render, resize and
-follow the active dark or light theme. There are still **no drawing features and
-no tools**; the canvas is a placeholder region until Stage 2 and the tool rail
-is empty until task 1.3. Do not describe the product as usable.
+The native shell is laid out, themed, and has a working tool palette: nine tools
+with painted vector icons, tooltips, active-tool highlighting, and single-key
+shortcuts. Selecting a tool changes UI state only — **nothing draws yet**; the
+drawing engine is Stage 3 and the canvas remains a placeholder until Stage 2. Do
+not describe the product as usable.
 
 Repository layout:
 
@@ -26,18 +26,22 @@ crates/epsilon-app/         eframe desktop shell
   src/main.rs               native entry point
   src/layout.rs             shell size budgets, compile-time assertions, clamp helper
   src/theme.rs              semantic palettes, Visuals setup, theme application
-  src/app.rs                EpsilonApp: six-region layout, menus, About
+  src/tools.rs              Tool enum, shortcuts, painted icons, tool buttons
+  src/app.rs                EpsilonApp: shell, menus, tool state, About
 ```
 
 Shell behavior:
 
-- Theme: `Theme::{Dark, Light}` (default dark). `theme::apply` sets an explicit
-  `ThemePreference` plus Epsilon's `Visuals`, so the OS theme cannot override
-  the choice. View → "Dark mode" toggles it; every region reads the theme from
-  `egui::Visuals`, and the canvas uses `extreme_bg_color`.
+- Tool palette: Select (V), Hand (H), Rectangle (R), Ellipse (O), Diamond (D),
+  Line (L), Arrow (A), Freehand (P), Text (T). Plain key presses select a tool
+  unless a widget owns keyboard input; Ctrl/Alt/Cmd combinations are ignored.
+  Buttons are 40×34 with 20×20 vector icons painted from the active theme colors,
+  selected/hover/focus states, tooltips with shortcut hints, and accessible
+  button info.
+- Theme: `Theme::{Dark, Light}` (default dark), applied through an explicit
+  `ThemePreference` plus Epsilon's `Visuals`; View → "Dark mode" toggles it.
 - Menu bar: "Epsilon" (About, Quit) and "View" (Dark mode).
 - Top toolbar: wordmark, "Untitled", version.
-- Left: fixed 64px tool rail with a "TOOLS" header (buttons arrive in 1.3).
 - Right: resizable properties panel (default 264, range 200–400) with a
   "No selection" empty state.
 - Bottom: status bar ("Ready", app version).
@@ -54,49 +58,49 @@ Shell behavior:
 - eframe 0.37 API: `eframe::App::ui(&mut self, ui: &mut egui::Ui, frame:
   &mut eframe::Frame)`; panels take `&mut Ui` via `egui::Panel::top/left/right/
   bottom`; `Window::show` takes `&Context`. `Context::style()` is gone — use
-  `Context::style_of(egui::Theme)` and `Context::theme()`.
-- Remote: `origin git@github.com/paleaxis/epsilon.git`, branch `main`.
+  `style_of(egui::Theme)`. Keyboard capture check is
+  `Context::egui_wants_keyboard_input()`.
+- Remote: `origin git@github.com:paleaxis/epsilon.git`, branch `main`.
 
-## Verified commands and results (task 1.2)
+## Verified commands and results (task 1.3)
 
 | Command | Result |
 | --- | --- |
 | `cargo fmt --all -- --check` | exit 0, no diffs |
 | `cargo clippy --workspace --all-targets -- -D warnings` | exit 0 |
-| `cargo test --workspace` | **20 passed, 0 failed** (9 app, 11 core, 0 doc tests) |
+| `cargo test --workspace` | **25 passed, 0 failed** (14 app, 11 core, 0 doc tests) |
 | `cargo build --workspace` | success, no warnings |
 | `timeout 8 ./target/debug/epsilon` | exit 124 (still running at 8 s), no stderr output |
 
-App tests cover: layout budgets and the canvas-width clamp; headless shell
-layout at 720×480 and 1920×1080 in dark and light themes; immediate theme
-application to the egui context; WCAG contrast (primary text ≥ 7:1, weak text
-≥ 4.5:1 against panel and canvas in both themes); canvas distinct from chrome;
-theme switch propagates to context style.
+App tests cover: shortcut→tool mapping for all nine keys, uniqueness of shortcut
+letters, unrelated keys selecting nothing, keyboard events changing the active
+tool, modified (Ctrl) keys not changing it, layout budgets, headless shell layout
+(720×480 and 1920×1080, both themes), theme propagation and WCAG contrast.
 
-Native launch was confirmed by process liveness. The View-menu checkbox was not
-clicked through in a native session, and the palette was not visually reviewed
-in a screenshot; theme propagation is covered by the headless/style tests above.
+Native launch confirmed by process liveness. Tool-button clicks were not
+automated in a native session and the painted icons were not visually reviewed;
+keyboard selection and state wiring are covered by tests.
 
 ## Features implemented
 
-- Dark and light themes with a central semantic palette, tested contrast, and
-  a View-menu toggle applied immediately to every region.
-- Six-region native shell with resize-safe geometry and compile-time layout
-  budget assertions.
-- Functional menus (About dialog, Quit, theme toggle) and properties empty state.
+- Working tool model and palette with shortcuts, tooltips, selected state and
+  accessibility info (UI state only; drawing in Stage 3).
+- Dark and light themes with a central semantic palette and tested contrast.
+- Six-region native shell with resize-safe geometry and layout budget assertions.
+- Functional menus (About, Quit, theme toggle) and properties empty state.
 - UI-independent core with tested `Point`/`Rect` geometry.
 - Documentation baseline (`AGENTS.md`, roadmap, decisions, changelog).
 
 ## Known issues / limitations
 
-- Tool rail is intentionally empty until task 1.3; File/Edit/Help menus arrive in
-  1.4; status readouts are static until 1.6.
-- Canvas is a placeholder; drawing/navigation arrive in Stage 2.
-- Theme choice is not persisted across restarts (task 1.8); app always starts in
-  dark mode.
-- Panel widths are not persisted across restarts (task 1.8).
+- Selecting a tool has no canvas effect yet; drawing engine is Stage 3.
+- File/Edit/Help menus arrive in 1.4; the active tool is not repeated in the
+  status bar yet (1.6).
+- Canvas is a placeholder; navigation arrives in Stage 2.
+- Theme and panel widths are not persisted across restarts (task 1.8).
 - No CI configured; verification is local only.
-- No visual screenshot review has been performed.
+- No visual screenshot review has been performed (icons and selection colors are
+  covered only by code review, layout tests and launch checks).
 - Project license: GPL-3.0 (repository `LICENSE`); manifests declare
   `GPL-3.0-only`.
 
@@ -105,8 +109,8 @@ in a screenshot; theme propagation is covered by the headless/style tests above.
 1. Read `AGENTS.md`, `project/ROADMAP.md`, this file, and `project/DECISIONS.md`.
 2. `git status` — the tree must be clean at the start of a task.
 3. `cargo test --workspace` to confirm the baseline before editing.
-4. Implement only task **1.3** (Tool enum, active-tool state, left rail buttons
-   with tooltips/shortcut hints, V/H/R/O/D/L/A/P/T shortcuts, shortcut→tool test).
+4. Implement only task **1.4** (functional File/Edit/View/Help menus and top
+   toolbar; only actions that already work, no dead entries).
 5. Verify with `cargo fmt --all -- --check`,
    `cargo clippy --workspace --all-targets -- -D warnings`,
    `cargo test --workspace`, `cargo build --workspace`, and
