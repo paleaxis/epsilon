@@ -1,6 +1,7 @@
 use eframe::egui::{self, Align, Layout, RichText};
 
-use epsilon_core::geometry::Point;
+use epsilon_core::document::{Color as DocumentColor, Document, Element, ElementKind};
+use epsilon_core::geometry::{Point, Rect};
 use epsilon_core::grid;
 use epsilon_core::viewport::Viewport;
 
@@ -25,18 +26,69 @@ struct PersistedSettings {
     grid_enabled: bool,
 }
 
+/// Minimum on-screen width/height for a rectangle drag to be committed.
+const MIN_RECTANGLE_PIXELS: f64 = 3.0;
+
 /// High-level pointer interaction mode for the canvas.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 enum PointerMode {
     Idle,
     Panning {
         last: egui::Pos2,
     },
-    // Reserved for Stage 3 canvas object dragging.
-    #[allow(dead_code)]
+    /// A drag that creates or moves canvas content, in world coordinates.
     Dragging {
-        start: egui::Pos2,
+        start: Point,
+        current: Point,
     },
+}
+
+/// Projects an element's world bounds into screen space.
+fn element_screen_rect(
+    canvas_rect: egui::Rect,
+    viewport: &Viewport,
+    element: &Element,
+) -> egui::Rect {
+    let min = viewport.world_to_screen(Point::new(element.x, element.y));
+    let max = viewport.world_to_screen(Point::new(
+        element.x + element.width,
+        element.y + element.height,
+    ));
+    egui::Rect::from_two_pos(
+        egui::pos2(
+            canvas_rect.min.x + min.x as f32,
+            canvas_rect.min.y + min.y as f32,
+        ),
+        egui::pos2(
+            canvas_rect.min.x + max.x as f32,
+            canvas_rect.min.y + max.y as f32,
+        ),
+    )
+}
+
+/// Projects a draft drag's world bounds into screen space.
+fn draft_screen_rect(
+    canvas_rect: egui::Rect,
+    viewport: &Viewport,
+    start: Point,
+    current: Point,
+) -> egui::Rect {
+    let min = viewport.world_to_screen(Point::new(start.x.min(current.x), start.y.min(current.y)));
+    let max = viewport.world_to_screen(Point::new(start.x.max(current.x), start.y.max(current.y)));
+    egui::Rect::from_two_pos(
+        egui::pos2(
+            canvas_rect.min.x + min.x as f32,
+            canvas_rect.min.y + min.y as f32,
+        ),
+        egui::pos2(
+            canvas_rect.min.x + max.x as f32,
+            canvas_rect.min.y + max.y as f32,
+        ),
+    )
+}
+
+fn document_color(color: DocumentColor) -> egui::Color32 {
+    egui::Color32::from_rgba_unmultiplied(color.r, color.g, color.b, color.a)
 }
 
 /// Root application object and native shell.
@@ -56,6 +108,8 @@ pub struct EpsilonApp {
     help_open: bool,
     /// Canvas camera. In-memory only for now; persistence can come later.
     viewport: Viewport,
+    /// In-memory document being edited.
+    document: Document,
     /// Last pointer position in world coordinates, if the pointer is over the
     /// canvas. Drives the status-bar readout.
     pointer_world: Option<Point>,
@@ -78,6 +132,7 @@ impl Default for EpsilonApp {
             properties_open: true,
             help_open: false,
             viewport: Viewport::default(),
+            document: Document::default(),
             pointer_world: None,
             canvas_rect: egui::Rect::NOTHING,
             grid_enabled: false,
@@ -518,11 +573,9 @@ impl EpsilonApp {
                     self.pointer_mode = PointerMode::Panning { last: pos };
                 }
             }
-            PointerMode::Dragging { .. } => {
-                if !any_down {
-                    self.pointer_mode = PointerMode::Idle;
-                }
-            }
+            // Drawing drags are finished by `update_drawing` after the
+            // release event is visible to this frame.
+            PointerMode::Dragging { .. } => {}
         }
 
         let panning = matches!(self.pointer_mode, PointerMode::Panning { .. });
@@ -530,12 +583,117 @@ impl EpsilonApp {
             egui::CursorIcon::Grabbing
         } else if self.tool == Tool::Hand || (space_down && !typing) {
             egui::CursorIcon::Grab
+        } else if self.tool == Tool::Rectangle {
+            egui::CursorIcon::Crosshair
         } else {
             egui::CursorIcon::Default
         };
 
         if in_canvas || panning {
             ctx.set_cursor_icon(cursor);
+        }
+    }
+
+    /// Maps a screen position inside the canvas to world coordinates.
+    fn screen_to_world(&self, canvas_rect: egui::Rect, screen: egui::Pos2) -> Point {
+        self.viewport.screen_to_world(Point::new(
+            (screen.x - canvas_rect.min.x) as f64,
+            (screen.y - canvas_rect.min.y) as f64,
+        ))
+    }
+
+    /// Starts, updates and commits rectangle drags for the rectangle tool.
+    fn update_drawing(&mut self, ctx: &egui::Context, canvas_rect: egui::Rect) {
+        let pointer_pos = ctx.pointer_hover_pos();
+        let primary_down = ctx.input(|input| input.pointer.primary_down());
+        let primary_pressed = ctx.input(|input| input.pointer.primary_pressed());
+        let space_down = ctx.input(|input| input.key_down(egui::Key::Space));
+        let typing = ctx.egui_wants_keyboard_input();
+
+        if let PointerMode::Dragging { start, current } = self.pointer_mode {
+            let current = pointer_pos
+                .map(|pos| self.screen_to_world(canvas_rect, pos))
+                .unwrap_or(current);
+            if primary_down {
+                self.pointer_mode = PointerMode::Dragging { start, current };
+            } else {
+                self.commit_rectangle(start, current);
+                self.pointer_mode = PointerMode::Idle;
+            }
+            return;
+        }
+
+        if self.tool == Tool::Rectangle
+            && primary_pressed
+            && !space_down
+            && !typing
+            && let Some(pos) = pointer_pos
+            && canvas_rect.contains(pos)
+        {
+            let world = self.screen_to_world(canvas_rect, pos);
+            self.pointer_mode = PointerMode::Dragging {
+                start: world,
+                current: world,
+            };
+        }
+    }
+
+    /// Commits a rectangle if the drag is large enough on screen.
+    fn commit_rectangle(&mut self, start: Point, end: Point) {
+        let rect = Rect::from_corners(start, end);
+        let screen_width = rect.width() * self.viewport.zoom;
+        let screen_height = rect.height() * self.viewport.zoom;
+        if screen_width < MIN_RECTANGLE_PIXELS || screen_height < MIN_RECTANGLE_PIXELS {
+            return;
+        }
+
+        let mut element = Element::new(
+            ElementKind::Rectangle,
+            rect.min.x,
+            rect.min.y,
+            rect.width(),
+            rect.height(),
+        );
+        element.style.stroke = match self.theme {
+            Theme::Dark => DocumentColor::rgb(235, 235, 235),
+            Theme::Light => DocumentColor::BLACK,
+        };
+        self.document.add(element);
+    }
+
+    /// Draws the document in paint order through the screen-space adapter.
+    fn paint_document(&self, painter: &egui::Painter, canvas_rect: egui::Rect) {
+        for element in self.document.paint_order() {
+            if element.kind != ElementKind::Rectangle {
+                continue;
+            }
+
+            let rect = element_screen_rect(canvas_rect, &self.viewport, element);
+            let fill = document_color(element.style.fill);
+            if fill.a() > 0 {
+                painter.rect_filled(rect, 0.0, fill);
+            }
+            let stroke_width = (element.style.stroke_width * self.viewport.zoom).max(0.75) as f32;
+            painter.rect_stroke(
+                rect,
+                0.0,
+                egui::Stroke::new(stroke_width, document_color(element.style.stroke)),
+                egui::StrokeKind::Inside,
+            );
+        }
+    }
+
+    /// Draws the live rectangle preview while dragging.
+    fn paint_draft(&self, painter: &egui::Painter, canvas_rect: egui::Rect, accent: egui::Color32) {
+        if let PointerMode::Dragging { start, current } = self.pointer_mode {
+            let rect = draft_screen_rect(canvas_rect, &self.viewport, start, current);
+            painter.rect_filled(rect, 0.0, accent.gamma_multiply(0.18));
+            painter.rect_stroke(
+                rect,
+                0.0,
+                egui::Stroke::new(1.0, accent),
+                egui::StrokeKind::Inside,
+            );
         }
     }
 
@@ -645,6 +803,7 @@ impl EpsilonApp {
 
                 self.update_pan(ui.ctx(), rect);
                 self.update_zoom(ui.ctx(), rect);
+                self.update_drawing(ui.ctx(), rect);
 
                 if self.grid_enabled {
                     let step =
@@ -702,6 +861,9 @@ impl EpsilonApp {
                         y += step;
                     }
                 }
+
+                self.paint_document(ui.painter(), rect);
+                self.paint_draft(ui.painter(), rect, ui.visuals().hyperlink_color);
 
                 // Prove the coordinate pipeline: the world origin is projected
                 // through the viewport and marked on screen.
@@ -909,6 +1071,152 @@ mod tests {
         assert!(ctx.style_of(egui::Theme::Dark).visuals.dark_mode);
     }
 
+    #[test]
+    fn rectangle_drag_commits_on_release() {
+        let ctx = egui::Context::default();
+        theme::apply(&ctx, Theme::Dark);
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1000.0, 700.0));
+        let mut app = EpsilonApp {
+            tool: Tool::Rectangle,
+            ..Default::default()
+        };
+
+        let frame = |app: &mut EpsilonApp, events: Vec<egui::Event>| {
+            let output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(screen),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    let _ = app.show_shell(ui);
+                },
+            );
+            output.drop_without_applying_deltas();
+        };
+
+        frame(&mut app, Vec::new());
+        let canvas = app.canvas_rect;
+        let start = canvas.center() - egui::vec2(40.0, 30.0);
+        let end = canvas.center() + egui::vec2(40.0, 30.0);
+
+        frame(
+            &mut app,
+            vec![
+                egui::Event::PointerMoved(start),
+                egui::Event::PointerButton {
+                    pos: start,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ],
+        );
+        frame(&mut app, vec![egui::Event::PointerMoved(end)]);
+        frame(
+            &mut app,
+            vec![egui::Event::PointerButton {
+                pos: end,
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: egui::Modifiers::NONE,
+            }],
+        );
+
+        assert_eq!(app.document.elements.len(), 1);
+        let element = &app.document.elements[0];
+        assert_eq!(element.kind, ElementKind::Rectangle);
+        let expected_width = 80.0 / app.viewport.zoom;
+        let expected_height = 60.0 / app.viewport.zoom;
+        assert!((element.width - expected_width).abs() < 0.01);
+        assert!((element.height - expected_height).abs() < 0.01);
+    }
+
+    #[test]
+    fn rectangle_commit_stores_normalized_world_bounds() {
+        let mut app = EpsilonApp {
+            viewport: Viewport {
+                offset: Point::new(20.0, 30.0),
+                zoom: 2.0,
+            },
+            ..Default::default()
+        };
+
+        app.commit_rectangle(Point::new(10.0, 20.0), Point::new(4.0, 8.0));
+
+        assert_eq!(app.document.elements.len(), 1);
+        let element = &app.document.elements[0];
+        assert_eq!(element.kind, ElementKind::Rectangle);
+        assert_eq!(element.x, 4.0);
+        assert_eq!(element.y, 8.0);
+        assert_eq!(element.width, 6.0);
+        assert_eq!(element.height, 12.0);
+    }
+
+    #[test]
+    fn rectangle_commit_discards_drags_below_minimum_screen_size() {
+        let mut app = EpsilonApp::default();
+        app.commit_rectangle(Point::ZERO, Point::new(1.0, 3.0));
+        assert!(app.document.elements.is_empty());
+
+        app.commit_rectangle(Point::ZERO, Point::new(3.0, 3.0));
+        assert_eq!(app.document.elements.len(), 1);
+    }
+
+    #[test]
+    fn element_screen_rect_matches_viewport_at_extreme_zoom() {
+        let canvas = egui::Rect::from_min_size(egui::pos2(10.0, 20.0), egui::vec2(800.0, 600.0));
+        let element = Element::with_id(
+            epsilon_core::document::ElementId::new(1),
+            ElementKind::Rectangle,
+            100.0,
+            200.0,
+            50.0,
+            30.0,
+        );
+
+        for (zoom, offset, expected) in [
+            (
+                0.1,
+                Point::new(10.0, 20.0),
+                egui::Rect::from_min_size(egui::pos2(30.0, 60.0), egui::vec2(5.0, 3.0)),
+            ),
+            (
+                10.0,
+                Point::new(-100.0, -200.0),
+                egui::Rect::from_min_size(egui::pos2(910.0, 1820.0), egui::vec2(500.0, 300.0)),
+            ),
+        ] {
+            let viewport = Viewport { offset, zoom };
+            let actual = element_screen_rect(canvas, &viewport, &element);
+            assert!((actual.min.x - expected.min.x).abs() < 0.01);
+            assert!((actual.min.y - expected.min.y).abs() < 0.01);
+            assert!((actual.width() - expected.width()).abs() < 0.01);
+            assert!((actual.height() - expected.height()).abs() < 0.01);
+        }
+    }
+
+    #[test]
+    fn draft_screen_rect_normalizes_reverse_drags() {
+        let canvas = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0));
+        let viewport = Viewport::default();
+        let forward = draft_screen_rect(
+            canvas,
+            &viewport,
+            Point::new(10.0, 20.0),
+            Point::new(4.0, 8.0),
+        );
+        let reverse = draft_screen_rect(
+            canvas,
+            &viewport,
+            Point::new(4.0, 8.0),
+            Point::new(10.0, 20.0),
+        );
+        assert_eq!(forward, reverse);
+        assert_eq!(forward.min, egui::pos2(4.0, 8.0));
+        assert_eq!(forward.max, egui::pos2(10.0, 20.0));
+    }
+
     fn run_shortcut(app: &mut EpsilonApp, key: egui::Key, modifiers: egui::Modifiers) {
         let ctx = egui::Context::default();
         let input = egui::RawInput {
@@ -1012,7 +1320,8 @@ mod tests {
     fn pointer_mode_dragging_variant_is_representable() {
         let app = EpsilonApp {
             pointer_mode: PointerMode::Dragging {
-                start: egui::Pos2::ZERO,
+                start: Point::ZERO,
+                current: Point::ZERO,
             },
             ..Default::default()
         };

@@ -435,3 +435,20 @@ types, serialized with serde.
 
 **Consequences.** Paint order is deterministic and independent of vector order,
 round-trips preserve both order and IDs, and core remains UI-independent.
+
+---
+
+## D-024 — Elements render through a screen-space adapter (2026-11-23)
+
+**Context.** Task 3.2 requires rectangles that persist in the document, render at
+10%–1000% zoom, and match their drag bounds without relying on screenshots.
+
+**Decision.** `EpsilonApp` owns the in-memory `Document`. Rendering projects each
+element's world bounds through `Viewport` into a screen-space `egui::Rect`;
+`element_screen_rect` is a pure helper so zoom behavior is unit-tested. Rectangle
+drags store normalized world bounds and are discarded when either screen
+dimension is below 3 pixels. The live preview uses the same projection helper.
+
+**Consequences.** World geometry stays canonical and zoom-independent, while the
+app only adapts it at the rendering boundary. Shape-specific drawing can reuse
+the same adapter in later tasks.

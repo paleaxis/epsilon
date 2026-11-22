@@ -243,7 +243,7 @@ monotonic `ElementId` generation. Paint order sorts by `z_order` with stable
 insertion-order ties. JSON round-trip and ordering tests pass; core still has
 no egui dependency.
 
-### [ ] 3.2 — Rendering pipeline and rectangle tool
+### [x] 3.2 — Rendering pipeline and rectangle tool
 
 Screen-space tessellation adapter in the app; drag-to-create rectangle; minimum
 size handling; live preview while dragging.
@@ -251,6 +251,12 @@ size handling; live preview while dragging.
 Acceptance: rectangle persists in document, renders correctly at 10%–1000% zoom;
 created bounds match drag in world space (screenshot-free numeric test where
 possible).
+
+Completed 2026-11-23: the app holds an in-memory `Document`, projects elements
+through the viewport into egui rectangles, draws them in paint order, and adds
+a live drag preview. Rectangle drags commit normalized world bounds and discard
+drags smaller than 3 screen pixels. Numeric tests cover 10% and 1000% zoom plus
+an end-to-end pointer press/move/release frame sequence.
 
 ### [ ] 3.3 — Ellipse tool
 

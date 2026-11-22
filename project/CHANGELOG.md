@@ -4,6 +4,12 @@ Notable changes, newest first. Version sections are added at release time.
 
 ## [Unreleased]
 
+### Added — 2026-11-23 (task 3.2)
+
+- Screen-space element rendering with paint-order support.
+- Rectangle tool with live drag preview, normalized world bounds and minimum-
+  size discard.
+
 ### Added — 2026-11-22 (task 3.1)
 
 - Core document model with schema version, canvas settings and element base
