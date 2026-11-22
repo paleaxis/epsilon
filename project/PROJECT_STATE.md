@@ -1,9 +1,9 @@
 # Project State
 
 Last updated: 2026-11-22
-Current stage: **Stage 1 — Native desktop shell**
-Last completed task: **1.7 — Shortcut registry and help overlay**
-Next task: **1.9 — Shell polish and manual verification pass**
+Current stage: **Stage 2 — Canvas engine (starting)**
+Last completed task: **1.9 — Shell polish and manual verification pass**
+Next task: **2.1 — Viewport model and transforms (core)**
 
 ## Status
 
@@ -71,7 +71,7 @@ Other shell behavior:
 | --- | --- |
 | `cargo fmt --all -- --check` | exit 0 |
 | `cargo clippy --workspace --all-targets -- -D warnings` | exit 0 |
-| `cargo test --workspace` | **35 passed, 0 failed** (24 app, 11 core) |
+| `cargo test --workspace` | **36 passed, 0 failed** (25 app, 11 core) |
 | `cargo build --workspace` | success, no warnings |
 | `timeout 8 ./target/debug/epsilon` | exit 124 (alive, no stderr) |
 
@@ -89,11 +89,34 @@ behind them are tested.
 - Collapsible/resizable properties panel with section header and empty state.
 - Status bar reports active tool, pointer/zoom placeholders and app version.
 - Central shortcut registry and F1/? help overlay.
+- Stage 1 shell polish (spacing, separators, compact status text).
 - Persisted theme/tool; eframe-persisted window geometry and panel widths.
 - Tool palette with shortcuts, painted icons and accessible names.
 - Dark/light themes with central palette and contrast tests.
 - Six-region shell with resize-safe layout budgets.
 - UI-independent core geometry; documentation baseline.
+
+## Manual verification checklist (task 1.9)
+
+Automated checks run for this task:
+
+| Check | Result |
+| --- | --- |
+| `cargo fmt --all -- --check` | pass |
+| `cargo clippy --workspace --all-targets -- -D warnings` | pass |
+| `cargo test --workspace` | 36 passed, 0 failed |
+| `cargo build --workspace` | success, no warnings |
+| `timeout 8 ./target/debug/epsilon` | exit 124 (alive, no stderr) |
+| Headless shell at 720×480, 1920×1080 | pass |
+| Headless shell at 150% pixels-per-point | pass (no panic) |
+
+Manual visual checks not performed in this environment (no screenshot/browser
+automation allowed). Items requiring a human reviewer:
+
+- [ ] HiDPI rendering at 150% scale looks correct (text/icons/spacing).
+- [ ] Keyboard focus traversal reaches every interactive control.
+- [ ] Tool rail, menus, toolbar and status bar spacing looks balanced.
+- [ ] Collapsed properties panel leaves a usable grab handle.
 
 ## Known issues / limitations
 
@@ -109,8 +132,8 @@ behind them are tested.
 
 1. Read `AGENTS.md`, `project/ROADMAP.md`, this file, `project/DECISIONS.md`.
 2. `git status` must be clean; run `cargo test --workspace` for the baseline.
-3. Implement only task **1.9** (shell polish and manual verification pass:
-   spacing, typography, min sizes, HiDPI, keyboard focus; record checklist).
+3. Implement only task **2.1** (viewport model and transforms in core:
+   world↔screen conversion, cursor-anchored zoom, clamping, fit-bounds).
 4. Verify format, clippy, tests, build, and `timeout 8 ./target/debug/epsilon`.
 5. Update this file, `ROADMAP.md`, `CHANGELOG.md`, then commit and push.
 

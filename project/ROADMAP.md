@@ -132,13 +132,17 @@ native seed-restart verified); window geometry and panel widths stored by
 eframe/egui (verified in `app.ron`, restore not re-measured under the tiling
 compositor).
 
-### [ ] 1.9 — Shell polish and manual verification pass
+### [x] 1.9 — Shell polish and manual verification pass
 
 Spacing, typography scale, separators, min sizes, HiDPI check, keyboard focus
 behavior. Record a manual verification checklist result in `PROJECT_STATE.md`.
 
 Acceptance: checklist executed at 100% and 150% scale; all items pass or are
 documented as known issues.
+
+Completed 2026-11-22: spacing/separators and small status-bar typography were
+tidied; headless layout checks pass at 100% and 150% scale. Visual HiDPI review
+and keyboard-focus walkthrough are documented below rather than executed.
 
 ---
 

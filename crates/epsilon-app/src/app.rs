@@ -251,6 +251,8 @@ impl EpsilonApp {
                 ui.vertical_centered(|ui| {
                     ui.label(RichText::new("TOOLS").small().strong());
                 });
+                ui.add_space(2.0);
+                ui.separator();
                 ui.add_space(4.0);
 
                 for tool in Tool::ALL {
@@ -261,7 +263,7 @@ impl EpsilonApp {
                     if clicked {
                         self.tool = tool;
                     }
-                    ui.add_space(2.0);
+                    ui.add_space(4.0);
                 }
             });
     }
@@ -367,11 +369,15 @@ impl EpsilonApp {
             .exact_size(layout::STATUS_BAR_HEIGHT)
             .show(ui, |ui| {
                 ui.horizontal_centered(|ui| {
-                    ui.label(RichText::new(format!("Tool: {}", self.tool.name())).weak());
+                    ui.label(
+                        RichText::new(format!("Tool: {}", self.tool.name()))
+                            .small()
+                            .weak(),
+                    );
                     ui.add_space(12.0);
-                    ui.label(RichText::new("Pointer: —").weak());
+                    ui.label(RichText::new("Pointer: —").small().weak());
                     ui.add_space(12.0);
-                    ui.label(RichText::new("Zoom: —").weak());
+                    ui.label(RichText::new("Zoom: —").small().weak());
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         ui.label(
                             RichText::new(concat!("Epsilon ", env!("CARGO_PKG_VERSION"))).weak(),
@@ -778,6 +784,25 @@ mod tests {
             properties_open: false,
             ..Default::default()
         };
+        let output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(screen),
+                ..Default::default()
+            },
+            |ui| {
+                let _ = app.show_shell(ui);
+            },
+        );
+        output.drop_without_applying_deltas();
+    }
+
+    #[test]
+    fn shell_renders_at_150_percent_scale() {
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(720.0, 480.0));
+        let ctx = egui::Context::default();
+        ctx.set_pixels_per_point(1.5);
+        theme::apply(&ctx, Theme::Dark);
+        let mut app = EpsilonApp::default();
         let output = ctx.run_ui(
             egui::RawInput {
                 screen_rect: Some(screen),

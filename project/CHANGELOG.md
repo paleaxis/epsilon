@@ -4,6 +4,11 @@ Notable changes, newest first. Version sections are added at release time.
 
 ## [Unreleased]
 
+### Changed — 2026-11-22 (task 1.9)
+
+- Tidied tool-rail spacing and separators and compacted status-bar typography.
+- Added headless layout coverage at 150% pixels-per-point.
+
 ### Added — 2026-11-22 (task 1.7)
 
 - Central `KEYBINDINGS` registry for implemented tool and help shortcuts.
