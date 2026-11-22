@@ -1,13 +1,14 @@
 //! Epsilon — a native Rust whiteboard desktop application.
 
 mod app;
+mod layout;
 
 fn main() -> eframe::Result {
     let options = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
             .with_title("Epsilon")
             .with_inner_size([1280.0, 800.0])
-            .with_min_inner_size([720.0, 480.0]),
+            .with_min_inner_size(layout::MIN_WINDOW_SIZE),
         ..Default::default()
     };
 

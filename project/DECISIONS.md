@@ -172,3 +172,25 @@ state.
 
 **Consequences.** Commands must be tested for round-trip equality. Exact data
 structures are finalized in task 4.1, not before.
+
+---
+
+## D-010 — Shell layout budgets are compile-time checked and headlessly tested (2026-11-22)
+
+**Context.** Task 1.1 must keep six regions usable at the 720×480 minimum window,
+with a user-resizable properties panel, and must not regress silently as panel
+sizes change.
+
+**Decision.** All shell dimensions live in `crates/epsilon-app/src/layout.rs`.
+Compile-time `const` assertions tie the minimum window size to the tool rail,
+maximum properties width and canvas minimums. The properties panel's maximum
+width is computed from the space actually left over, so a window manager forcing
+a smaller window cannot starve the canvas. Layout is regression-tested headlessly
+by running one real egui frame with `Context::run_ui` at `RawInput::screen_rect`
+720×480 and 1920×1080 and asserting the canvas rect stays within the chrome.
+No browser or screenshot tooling is involved.
+
+**Consequences.** Changing the minimum window size or panel budget requires
+updating `layout.rs`; the compiler rejects inconsistent budgets. Headless UI
+layout tests with real egui fonts are available for later shell tasks, while
+purely visual qualities still need a manual native check.

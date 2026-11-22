@@ -4,6 +4,16 @@ Notable changes, newest first. Version sections are added at release time.
 
 ## [Unreleased]
 
+### Added — 2026-11-22 (task 1.1)
+
+- Six-region native shell: menu bar, top toolbar, left tool rail, canvas region,
+  right properties panel, status bar.
+- Functional "Epsilon" menu with an About dialog and Quit.
+- Resizable properties panel with a "No selection" empty state and a width clamp
+  that keeps the canvas at least 240px wide in undersized windows.
+- Shell layout constants with compile-time budget assertions and headless layout
+  tests at 720×480 and 1920×1080.
+
 ### Added — 2026-11-22 (task 0.1)
 
 - Cargo workspace with an egui-independent `epsilon-core` crate and an

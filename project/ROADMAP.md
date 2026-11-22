@@ -29,7 +29,7 @@ window; documentation allows a fresh session to resume.
 
 ## Stage 1 — Native desktop shell
 
-### [ ] 1.1 — Application shell layout
+### [x] 1.1 — Application shell layout
 
 Build the region skeleton: menu bar, top toolbar, left tool panel, central canvas
 region, right properties panel, status bar. Regions resize sensibly at 720×480
@@ -37,6 +37,10 @@ and 1920×1080.
 
 Acceptance: launches natively; all six regions visible; window resize does not
 panic or clip controls; `cargo test --workspace` and fmt pass.
+
+Completed 2026-11-22: six regions implemented with compile-time size budgets,
+headless layout tests at both sizes, native launch verified. Tool content,
+menus, themes and live readouts remain in 1.2–1.6.
 
 ### [ ] 1.2 — Theme system (dark / light)
 

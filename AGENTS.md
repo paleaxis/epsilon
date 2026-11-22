@@ -115,5 +115,10 @@ accurate checkpoint instead of claiming progress.
 
 - Rust 1.100 on Arch Linux; egui/eframe 0.37 (requires Rust ≥ 1.95).
 - eframe 0.37 API: implement `eframe::App::ui(&mut self, ui: &mut egui::Ui,
-  frame: &mut eframe::Frame)`. Panels take `&mut Ui` (`CentralPanel::show(ui, …)`),
-  not `&Context`.
+  frame: &mut eframe::Frame)`. Panels take `&mut Ui`
+  (`CentralPanel::show(ui, …)`), not `&Context`; use `egui::Panel::top/left/
+  right/bottom` (the old `SidePanel`/`TopBottomPanel` types are gone).
+- Shell dimensions belong in `epsilon-app/src/layout.rs`; headless layout tests
+  use `egui::Context::run_ui` with an explicit `RawInput::screen_rect`.
+- Native launch check: `timeout 8 ./target/debug/epsilon` → exit 124 means it
+  stayed alive; any other exit is a failure to investigate.
