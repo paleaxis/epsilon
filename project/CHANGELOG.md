@@ -4,6 +4,12 @@ Notable changes, newest first. Version sections are added at release time.
 
 ## [Unreleased]
 
+### Added — 2026-11-23 (task 3.6)
+
+- Arrow tool with zoom-independent arrowheads and the shared Shift angle
+  constraint.
+- Core arrowhead geometry with short-shaft clamping.
+
 ### Added — 2026-11-23 (task 3.5)
 
 - Line tool with live preview, world-space endpoints and Shift-constrained

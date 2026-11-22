@@ -226,6 +226,32 @@ impl Rect {
     }
 }
 
+/// Tip and base vertices of an arrowhead ending at `end`.
+///
+/// The head is clamped to half the shaft and its width to the head length, so
+/// short arrows keep a visible shaft and never extend behind `start`.
+pub fn arrowhead_points(
+    start: Point,
+    end: Point,
+    head_length: f64,
+    half_width: f64,
+) -> Option<[Point; 3]> {
+    let delta = end - start;
+    let length = delta.length();
+    let direction = delta.normalized()?;
+    if !head_length.is_finite() || head_length <= 0.0 {
+        return None;
+    }
+
+    // Clamp the head to half the shaft so very short arrows keep a visible
+    // shaft instead of letting the head extend back past the start point.
+    let head_length = head_length.min(length * 0.5);
+    let half_width = half_width.max(0.0).min(head_length * 0.75);
+    let base = end - direction * head_length;
+    let normal = Point::new(-direction.y, direction.x);
+    Some([end, base + normal * half_width, base - normal * half_width])
+}
+
 /// Rotates `end` around `origin` to the nearest multiple of `step_radians`,
 /// preserving its distance from `origin`.
 ///
@@ -383,6 +409,29 @@ mod tests {
         let moved = rect.translate(Point::new(3.0, -4.0));
         assert_eq!(moved.min, Point::new(3.0, -4.0));
         assert_eq!(moved.size(), rect.size());
+    }
+
+    #[test]
+    fn arrowhead_points_scale_with_short_shafts() {
+        let head = arrowhead_points(Point::ZERO, Point::new(100.0, 0.0), 12.0, 6.0)
+            .expect("non-zero arrow");
+        assert_eq!(head[0], Point::new(100.0, 0.0));
+        assert!(approx(head[1].x, 88.0));
+        assert!(approx(head[1].y, 6.0));
+        assert!(approx(head[2].x, 88.0));
+        assert!(approx(head[2].y, -6.0));
+
+        let short =
+            arrowhead_points(Point::ZERO, Point::new(4.0, 0.0), 12.0, 6.0).expect("short arrow");
+        assert!(approx(short[1].x, 2.0));
+        assert!(approx(short[1].y, 1.5));
+        assert!(short[1].x >= 0.0 && short[2].x >= 0.0);
+
+        assert_eq!(arrowhead_points(Point::ZERO, Point::ZERO, 12.0, 6.0), None);
+        assert_eq!(
+            arrowhead_points(Point::ZERO, Point::new(1.0, 0.0), 0.0, 6.0),
+            None
+        );
     }
 
     #[test]

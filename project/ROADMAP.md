@@ -296,12 +296,18 @@ and accepts thin horizontal/vertical lines by testing segment length rather
 than both bounds. Shift constrains the endpoint through a tested core function
 that snaps to 15° increments while preserving length.
 
-### [ ] 3.6 — Arrow tool
+### [x] 3.6 — Arrow tool
 
 Line with arrowhead geometry; head avoids overdraw at short lengths; shift
 constraint.
 
 Acceptance: arrowhead polygon tests; rendering verified at multiple zooms.
+
+Completed 2026-11-23: arrows reuse the line endpoint model and 15° Shift
+constraint. `arrowhead_points` clamps the head to half the shaft and its width
+to the head length, with unit tests for normal, short and zero-length arrows.
+The app keeps the head a constant screen size across zoom levels by converting
+pixels through the viewport.
 
 ### [ ] 3.7 — Freehand tool
 

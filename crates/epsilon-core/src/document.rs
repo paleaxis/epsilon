@@ -179,9 +179,18 @@ impl Element {
     /// Creates a line whose endpoints are stored in world space. The element's
     /// base bounds are derived from those endpoints.
     pub fn line(start: Point, end: Point) -> Self {
+        Self::linear(ElementKind::Line, start, end)
+    }
+
+    /// Creates an arrow with world-space endpoints and derived bounds.
+    pub fn arrow(start: Point, end: Point) -> Self {
+        Self::linear(ElementKind::Arrow, start, end)
+    }
+
+    fn linear(kind: ElementKind, start: Point, end: Point) -> Self {
         let bounds = Rect::from_corners(start, end);
         let mut element = Self::new(
-            ElementKind::Line,
+            kind,
             bounds.min.x,
             bounds.min.y,
             bounds.width(),
@@ -347,6 +356,20 @@ mod tests {
         assert_eq!(element.y, 20.0);
         assert_eq!(element.width, 6.0);
         assert_eq!(element.height, 50.0);
+    }
+
+    #[test]
+    fn arrow_element_keeps_world_endpoints_and_derives_bounds() {
+        let start = Point::new(8.0, 30.0);
+        let end = Point::new(2.0, 10.0);
+        let element = Element::arrow(start, end);
+
+        assert_eq!(element.kind, ElementKind::Arrow);
+        assert_eq!(element.points, vec![start, end]);
+        assert_eq!(element.x, 2.0);
+        assert_eq!(element.y, 10.0);
+        assert_eq!(element.width, 6.0);
+        assert_eq!(element.height, 20.0);
     }
 
     #[test]

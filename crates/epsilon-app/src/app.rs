@@ -1,7 +1,7 @@
 use eframe::egui::{self, Align, Layout, RichText};
 
 use epsilon_core::document::{Color as DocumentColor, Document, Element, ElementKind};
-use epsilon_core::geometry::{Point, Rect, constrain_angle};
+use epsilon_core::geometry::{Point, Rect, arrowhead_points, constrain_angle};
 use epsilon_core::grid;
 use epsilon_core::viewport::Viewport;
 
@@ -29,8 +29,12 @@ struct PersistedSettings {
 /// Minimum on-screen width/height (or line length) for a drag to be committed.
 const MIN_SHAPE_PIXELS: f64 = 3.0;
 
-/// Shift-constrained lines snap to 15-degree increments.
+/// Shift-constrained linear tools snap to 15-degree increments.
 const LINE_ANGLE_STEP: f64 = std::f64::consts::PI / 12.0;
+
+/// Arrowhead size in screen pixels, independent of zoom.
+const ARROW_HEAD_LENGTH_PIXELS: f64 = 12.0;
+const ARROW_HEAD_HALF_WIDTH_PIXELS: f64 = 6.0;
 
 /// High-level pointer interaction mode for the canvas.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -54,13 +58,14 @@ fn drawing_kind(tool: Tool) -> Option<ElementKind> {
         Tool::Ellipse => Some(ElementKind::Ellipse),
         Tool::Diamond => Some(ElementKind::Diamond),
         Tool::Line => Some(ElementKind::Line),
+        Tool::Arrow => Some(ElementKind::Arrow),
         _ => None,
     }
 }
 
 /// Applies the active drag's optional constraint to its endpoint.
 fn drawing_end(kind: ElementKind, start: Point, end: Point, constrain: bool) -> Point {
-    if constrain && kind == ElementKind::Line {
+    if constrain && matches!(kind, ElementKind::Line | ElementKind::Arrow) {
         constrain_angle(start, end, LINE_ANGLE_STEP)
     } else {
         end
@@ -89,6 +94,26 @@ fn element_screen_rect(
             viewport,
             Point::new(element.x + element.width, element.y + element.height),
         ),
+    )
+}
+
+/// Projects an arrowhead into screen space, keeping its size zoom-independent.
+fn arrowhead_screen_points(
+    canvas_rect: egui::Rect,
+    viewport: &Viewport,
+    start: Point,
+    end: Point,
+) -> Option<Vec<egui::Pos2>> {
+    let head = arrowhead_points(
+        start,
+        end,
+        ARROW_HEAD_LENGTH_PIXELS / viewport.zoom,
+        ARROW_HEAD_HALF_WIDTH_PIXELS / viewport.zoom,
+    )?;
+    Some(
+        head.into_iter()
+            .map(|point| world_to_screen_pos(canvas_rect, viewport, point))
+            .collect(),
     )
 }
 
@@ -694,7 +719,7 @@ impl EpsilonApp {
         let rect = Rect::from_corners(start, end);
         let screen_width = rect.width() * self.viewport.zoom;
         let screen_height = rect.height() * self.viewport.zoom;
-        let too_small = if kind == ElementKind::Line {
+        let too_small = if matches!(kind, ElementKind::Line | ElementKind::Arrow) {
             start.distance(end) * self.viewport.zoom < MIN_SHAPE_PIXELS
         } else {
             screen_width < MIN_SHAPE_PIXELS || screen_height < MIN_SHAPE_PIXELS
@@ -703,10 +728,10 @@ impl EpsilonApp {
             return;
         }
 
-        let mut element = if kind == ElementKind::Line {
-            Element::line(start, end)
-        } else {
-            Element::new(kind, rect.min.x, rect.min.y, rect.width(), rect.height())
+        let mut element = match kind {
+            ElementKind::Line => Element::line(start, end),
+            ElementKind::Arrow => Element::arrow(start, end),
+            _ => Element::new(kind, rect.min.x, rect.min.y, rect.width(), rect.height()),
         };
         element.style.stroke = match self.theme {
             Theme::Dark => DocumentColor::rgb(235, 235, 235),
@@ -760,6 +785,26 @@ impl EpsilonApp {
                             ],
                             stroke,
                         );
+                    }
+                }
+                ElementKind::Arrow => {
+                    if let [start, end] = element.points.as_slice() {
+                        painter.line_segment(
+                            [
+                                world_to_screen_pos(canvas_rect, &self.viewport, *start),
+                                world_to_screen_pos(canvas_rect, &self.viewport, *end),
+                            ],
+                            stroke,
+                        );
+                        if let Some(head) =
+                            arrowhead_screen_points(canvas_rect, &self.viewport, *start, *end)
+                        {
+                            painter.add(egui::Shape::convex_polygon(
+                                head,
+                                stroke.color,
+                                egui::Stroke::NONE,
+                            ));
+                        }
                     }
                 }
                 _ => {}
@@ -825,6 +870,25 @@ impl EpsilonApp {
                         ],
                         egui::Stroke::new(1.0, accent),
                     );
+                }
+                ElementKind::Arrow => {
+                    let end = drawing_end(kind, start, current, constrain);
+                    painter.line_segment(
+                        [
+                            world_to_screen_pos(canvas_rect, &self.viewport, start),
+                            world_to_screen_pos(canvas_rect, &self.viewport, end),
+                        ],
+                        egui::Stroke::new(1.0, accent),
+                    );
+                    if let Some(head) =
+                        arrowhead_screen_points(canvas_rect, &self.viewport, start, end)
+                    {
+                        painter.add(egui::Shape::convex_polygon(
+                            head,
+                            accent,
+                            egui::Stroke::NONE,
+                        ));
+                    }
                 }
                 _ => {}
             }
@@ -1313,6 +1377,19 @@ mod tests {
     }
 
     #[test]
+    fn arrow_drag_stores_world_space_endpoints() {
+        let app = drag_shape_on_canvas(Tool::Arrow);
+        assert_eq!(app.document.elements.len(), 1);
+        let element = &app.document.elements[0];
+        assert_eq!(element.kind, ElementKind::Arrow);
+        let [start, end] = element.points.as_slice() else {
+            panic!("arrow should store exactly two endpoints");
+        };
+        assert!(((end.x - start.x) * app.viewport.zoom - 80.0).abs() < 0.01);
+        assert!(((end.y - start.y) * app.viewport.zoom - 60.0).abs() < 0.01);
+    }
+
+    #[test]
     fn line_commit_allows_thin_lines_but_discards_short_ones() {
         let mut app = EpsilonApp::default();
         app.commit_shape(ElementKind::Line, Point::ZERO, Point::new(10.0, 0.0));
@@ -1331,6 +1408,10 @@ mod tests {
         assert!((constrained.y - start.y).abs() < 1e-9);
         assert_eq!(drawing_end(ElementKind::Rectangle, start, end, true), end);
         assert_eq!(drawing_end(ElementKind::Line, start, end, false), end);
+        assert_eq!(
+            drawing_end(ElementKind::Arrow, start, end, true),
+            constrained
+        );
     }
 
     #[test]

@@ -505,3 +505,19 @@ round-trips preserve endpoints, and later resize/rotate operations can
 transform the points and recompute bounds without ambiguity. Closed shapes keep
 `points` empty. The new field is serde-defaulted, so older documents remain
 readable without a schema-version bump.
+
+---
+
+## D-028 — Arrowheads are clamped world geometry scaled from screen pixels (2026-11-23)
+
+**Context.** Task 3.6 needs arrowheads that stay usable across 10%–1000% zoom
+and do not grow behind the start of short arrows.
+
+**Decision.** `geometry::arrowhead_points` returns the tip plus two base
+vertices. It clamps the head length to half the shaft and the half-width to the
+head length. The app requests a 12px head at the current zoom, converts that to
+world units, and projects the resulting vertices through the viewport.
+
+**Consequences.** Arrowheads keep a stable on-screen size, short arrows retain a
+visible shaft, and the polygon is testable in core without egui. Zero-length
+arrows have no head.
