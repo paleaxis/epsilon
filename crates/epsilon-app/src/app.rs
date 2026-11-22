@@ -22,8 +22,8 @@ struct PersistedSettings {
 /// Root application object and native shell.
 ///
 /// This is the Stage 1 shell: regions are laid out and themed, with the tool
-/// palette active. Menus/toolbar (1.4), properties (1.5) and live status
-/// readouts (1.6) are filled in by later tasks.
+/// palette and the working menu/toolbar actions. Properties (1.5), live status
+/// readouts (1.6) and the shortcut help overlay (1.7) are filled in later.
 #[derive(Default)]
 pub struct EpsilonApp {
     about_open: bool,
@@ -58,32 +58,52 @@ impl EpsilonApp {
         }
     }
 
+    fn open_about(&mut self) {
+        self.about_open = true;
+    }
+
+    fn toggle_theme(&mut self, ctx: &egui::Context) {
+        let next = match self.theme {
+            Theme::Dark => Theme::Light,
+            Theme::Light => Theme::Dark,
+        };
+        self.set_theme(ctx, next);
+    }
+
+    /// The single theme control used by both the View menu and the toolbar.
+    fn theme_toggle(&mut self, ui: &mut egui::Ui) {
+        let mut dark = self.theme == Theme::Dark;
+        if ui.checkbox(&mut dark, "Dark mode").changed() {
+            self.toggle_theme(ui.ctx());
+        }
+    }
+
     fn menu_bar(&mut self, ui: &mut egui::Ui) {
         egui::Panel::top("menu_bar")
             .exact_size(layout::MENU_BAR_HEIGHT)
             .show(ui, |ui| {
                 egui::MenuBar::new().ui(ui, |ui| {
-                    ui.menu_button("Epsilon", |ui| {
-                        if ui.button("About Epsilon").clicked() {
-                            self.about_open = true;
-                            ui.close();
-                        }
-                        ui.separator();
+                    // Only actions that already work are listed. File/Edit will
+                    // grow when document and editing stages land.
+                    ui.menu_button("File", |ui| {
                         if ui.button("Quit").clicked() {
-                            ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+                            request_quit(ui.ctx());
                         }
                     });
                     ui.menu_button("View", |ui| {
-                        let mut dark = self.theme == Theme::Dark;
-                        if ui.checkbox(&mut dark, "Dark mode").changed() {
-                            self.set_theme(ui.ctx(), if dark { Theme::Dark } else { Theme::Light });
+                        self.theme_toggle(ui);
+                    });
+                    ui.menu_button("Help", |ui| {
+                        if ui.button("About Epsilon").clicked() {
+                            self.open_about();
+                            ui.close();
                         }
                     });
                 });
             });
     }
 
-    fn top_toolbar(&self, ui: &mut egui::Ui) {
+    fn top_toolbar(&mut self, ui: &mut egui::Ui) {
         egui::Panel::top("top_toolbar")
             .exact_size(layout::TOP_TOOLBAR_HEIGHT)
             .show(ui, |ui| {
@@ -92,6 +112,10 @@ impl EpsilonApp {
                     ui.add_space(4.0);
                     ui.label(RichText::new("Untitled").weak());
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        if ui.button("About").clicked() {
+                            self.open_about();
+                        }
+                        self.theme_toggle(ui);
                         ui.label(RichText::new(concat!("v", env!("CARGO_PKG_VERSION"))).weak());
                     });
                 });
@@ -228,6 +252,10 @@ impl EpsilonApp {
                 ui.label(RichText::new("Offline-first · no telemetry · GPL-3.0").weak());
             });
     }
+}
+
+fn request_quit(ctx: &egui::Context) {
+    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
 }
 
 impl eframe::App for EpsilonApp {
@@ -445,6 +473,41 @@ mod tests {
         };
         run_shortcut(&mut app, egui::Key::R, ctrl);
         assert_eq!(app.tool, Tool::Hand);
+    }
+
+    #[test]
+    fn about_action_opens_dialog() {
+        let mut app = EpsilonApp::default();
+        assert!(!app.about_open);
+        app.open_about();
+        assert!(app.about_open);
+    }
+
+    #[test]
+    fn quit_action_requests_window_close() {
+        let ctx = egui::Context::default();
+        let output = ctx.run_ui(Default::default(), |ui| request_quit(ui.ctx()));
+        let close_requested = output.viewport_output[&egui::ViewportId::ROOT]
+            .commands
+            .iter()
+            .any(|command| matches!(command, egui::ViewportCommand::Close));
+        output.drop_without_applying_deltas();
+        assert!(close_requested, "quit must send ViewportCommand::Close");
+    }
+
+    #[test]
+    fn theme_toggle_flips_and_applies_immediately() {
+        let ctx = egui::Context::default();
+        let mut app = EpsilonApp::default();
+        theme::apply(&ctx, app.theme);
+
+        app.toggle_theme(&ctx);
+        assert_eq!(app.theme, Theme::Light);
+        assert_eq!(ctx.theme(), egui::Theme::Light);
+
+        app.toggle_theme(&ctx);
+        assert_eq!(app.theme, Theme::Dark);
+        assert_eq!(ctx.theme(), egui::Theme::Dark);
     }
 
     #[test]

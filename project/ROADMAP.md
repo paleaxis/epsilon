@@ -67,7 +67,7 @@ Completed 2026-11-22: nine tools with painted vector icons, tooltips, selected
 state and accessible names; plain-key shortcuts handled unless a widget owns the
 keyboard; shortcut mapping and uniqueness tested. Drawing remains Stage 3.
 
-### [ ] 1.4 — Menus and top toolbar
+### [x] 1.4 — Menus and top toolbar
 
 Functional menu bar (File/Edit/View/Help) containing only actions that work at
 this stage (theme toggle, About, Quit; File/Edit entries added when their stages
@@ -75,6 +75,11 @@ land). Top toolbar hosts app identity and the theme/About actions.
 
 Acceptance: every visible menu item performs its action; no dead/placeholder
 entries; keyboard navigation works.
+
+Completed 2026-11-22: File → Quit, View → theme, Help → About; toolbar identity
+plus theme/About controls; actions share helpers and are tested. The Edit menu is
+intentionally omitted until Stage 4 provides working actions (no dead entries).
+Keyboard behavior comes from standard egui widgets; it was not automated.
 
 ### [ ] 1.5 — Right properties panel shell
 

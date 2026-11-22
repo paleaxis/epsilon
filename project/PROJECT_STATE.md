@@ -2,15 +2,15 @@
 
 Last updated: 2026-11-22
 Current stage: **Stage 1 — Native desktop shell**
-Last completed task: **1.8 — Window/settings persistence** (done out of order at the owner's request; 1.4–1.7 remain open)
-Next task: **1.4 — Menus and top toolbar**
+Last completed task: **1.4 — Menus and top toolbar**
+Next task: **1.5 — Right properties panel shell**
 
 ## Status
 
-The shell now persists the selected theme and active tool itself, and enables
-eframe persistence so window geometry and resizable panel widths survive
-restarts. The whiteboard itself is still not usable: the canvas is a placeholder
-until Stage 2 and tools do not draw until Stage 3.
+The shell has working File/View/Help menus and a toolbar with app identity,
+theme toggle and About. Theme/tool settings and window/panel state persist from
+task 1.8 (completed early). The whiteboard is still not usable: the canvas is a
+placeholder until Stage 2 and tools do not draw until Stage 3.
 
 Repository layout:
 
@@ -24,97 +24,91 @@ crates/epsilon-core/        UI-independent engine (no egui dependency)
 crates/epsilon-app/         eframe desktop shell
   src/main.rs               native entry point (persist_window enabled)
   src/layout.rs             shell size budgets + compile-time assertions
-  src/theme.rs              semantic palettes, Visuals setup, (de)serializable Theme
+  src/theme.rs              semantic palettes, Visuals setup, serializable Theme
   src/tools.rs              Tool enum, shortcuts, painted icons, tool buttons
-  src/app.rs                EpsilonApp, menus, tool state, persisted settings
+  src/app.rs                EpsilonApp, menus, toolbar, tool state, settings
 ```
 
-Persistence design:
+Working UI actions:
 
-- eframe's `persistence` feature is enabled; settings go to eframe's store
-  (`$XDG_DATA_HOME/epsilon/app.ron`, default `~/.local/share/epsilon/app.ron`).
-- App settings (`epsilon.settings`): `theme` and `tool`, RON-serialized through
-  `eframe::set_value` and restored in `EpsilonApp::from_storage`. Missing or
-  corrupt values fall back to dark theme + Select tool (tested).
-- Window geometry: eframe stores its `window` key (`persist_window: true`) and
-  restores position/size.
-- Panel widths: egui stores the resizable properties panel's `PanelState` in
-  egui memory, which eframe persists under the `egui` key
-  (`persist_egui_memory` is asserted true by a test).
-- The properties panel now has a fixed 200–400px resize range. The previous
-  available-width clamp was removed because transient narrow frames at startup
-  could clamp and overwrite a persisted width; the compile-time layout budget
-  still guarantees a 240px canvas at the 720px minimum window.
+| Where | Action |
+| --- | --- |
+| File menu | Quit (sends `ViewportCommand::Close`) |
+| View menu | "Dark mode" checkbox, applied immediately |
+| Help menu | About Epsilon (dialog) |
+| Top toolbar | Wordmark, document title, theme checkbox, About button, version |
 
-## Verified evidence (task 1.8)
+Only working actions are listed; the Edit menu is intentionally absent until
+undo/clipboard stage 4 exists. Menus and toolbar share the same action helpers
+(`toggle_theme`, `open_about`, `request_quit`). Standard egui widgets provide
+mouse and keyboard focus/activation behavior.
 
-A native run against `XDG_DATA_HOME=/tmp/epsilon-persist-test` produced
-`/tmp/epsilon-persist-test/epsilon/app.ron` containing:
+Other shell behavior:
 
-- `"epsilon.settings": "(theme:light,tool:Text)"` after seeding those values and
-  restarting: the app loaded them, applied `theme_preference:Light`, and saved
-  the same values on exit (proves theme/tool restore).
-- `"window": "...inner_size_points:(x:...,y:...)"` (window geometry stored).
-- `"egui"` memory containing the menu, toolbar, rail, properties panel and
-  status-bar `outer_rect`s (panel sizes stored).
-
-Caveats: the session runs a tiling compositor (niri), which forces window sizes;
-window-size restoration and panel-width restoration were not independently
-re-measured after restart, so those rely on eframe/egui behavior rather than a
-reproduced measurement. No compositor window-close commands are used for
-verification anymore.
+- Tool palette: Select (V), Hand (H), Rectangle (R), Ellipse (O), Diamond (D),
+  Line (L), Arrow (A), Freehand (P), Text (T), painted icons, tooltips,
+  selected state; shortcuts defer to focused text input.
+- Theme palette in `theme.rs`, default dark, explicit `ThemePreference`.
+- Six regions: menu bar, top toolbar, left rail, canvas placeholder, properties
+  panel (200–400px, "No selection" empty state), status bar.
+- Persistence: eframe `persistence` enabled; `epsilon.settings` holds theme/tool;
+  window geometry and egui panel memory persist through eframe.
+- Layout budgets are compile-time checked (canvas ≥ 240px at 720×480).
 
 ## Environment
 
 - Linux (Arch/CachyOS), niri Wayland session; Rust 1.100.0 (system toolchain,
   no rustup), cargo 1.100.0.
-- egui/eframe **0.37.0**, glow backend, `persistence` feature; requires Rust ≥ 1.95.
+- egui/eframe **0.37.0**, glow backend, persistence; requires Rust ≥ 1.95.
 - eframe 0.37 API: `App::ui(&mut Ui, &mut Frame)`; `Panel::top/left/right/bottom`;
   `Window::show(&Context)`; `Context::style_of(egui::Theme)`;
   `Context::egui_wants_keyboard_input()`; `cc.storage` is a field.
-- Remote: `origin git@github.com:paleaxis/epsilon.git`, branch `main`.
+- Remote: `origin git@github.com/paleaxis/epsilon.git`, branch `main`.
 
-## Commands and results (final state for this task)
+## Verified commands and results (task 1.4)
 
 | Command | Result |
 | --- | --- |
 | `cargo fmt --all -- --check` | exit 0 |
 | `cargo clippy --workspace --all-targets -- -D warnings` | exit 0 |
-| `cargo test --workspace` | **27 passed, 0 failed** (16 app, 11 core) |
+| `cargo test --workspace` | **30 passed, 0 failed** (19 app, 11 core) |
 | `cargo build --workspace` | success, no warnings |
 | `timeout 8 ./target/debug/epsilon` | exit 124 (alive, no stderr) |
 
-App tests cover: persistence round-trip through a fake eframe `Storage`,
-missing/corrupt settings fallback, `persist_egui_memory` enabled, tool
-shortcuts, theme application/contrast, and headless shell layout at 720×480 and
-1920×1080 in both themes.
+New tests cover About opening, Quit sending `ViewportCommand::Close`, and theme
+toggling applying immediately. Existing tests cover persistence, layout, tool
+shortcuts, contrast and both-theme shell rendering.
+
+Native launch was verified by process liveness. Menu clicks and keyboard
+navigation were not automated or visually reviewed; only the action functions
+behind them are tested.
 
 ## Features implemented
 
-- Persisted theme and active tool across restarts; window geometry and panel
-  widths delegated to eframe persistence.
-- Tool palette with shortcuts, painted icons and accessible names (UI state only).
-- Dark/light themes with a central palette and tested contrast.
+- Working menus (File/Quit, View/theme, Help/About) and toolbar actions.
+- Persisted theme/tool; eframe-persisted window geometry and panel widths.
+- Tool palette with shortcuts, painted icons and accessible names.
+- Dark/light themes with central palette and contrast tests.
 - Six-region shell with resize-safe layout budgets.
-- Functional About/Quit/theme menus; properties empty state.
-- UI-independent core geometry + documentation baseline.
+- UI-independent core geometry; documentation baseline.
 
 ## Known issues / limitations
 
-- Menus/toolbar (1.4), properties panel (1.5), live status readouts (1.6) and
-  shortcut registry/help (1.7) remain open; 1.8 was completed early by request.
+- Edit menu and formatting actions are not implemented (Stage 4); File has only
+  Quit until document I/O (Stage 5).
+- Properties panel is a shell (1.5); status bar readouts are static (1.6);
+  shortcut registry/help overlay absent (1.7).
 - Canvas and drawing (Stages 2–3) are not implemented.
-- Window-size/panel-width restoration relies on eframe/egui and was not
-  independently reproduced (tiling compositor); settings fallback is tested.
-- No CI; local verification only. No screenshot review has been performed.
+- No CI; local verification only. No visual/screenshot review performed.
+- Window/panel restore relies on eframe/egui and was not re-measured under niri.
 - Project license: GPL-3.0 (`LICENSE`); manifests declare `GPL-3.0-only`.
 
 ## Resume instructions
 
 1. Read `AGENTS.md`, `project/ROADMAP.md`, this file, `project/DECISIONS.md`.
 2. `git status` must be clean; run `cargo test --workspace` for the baseline.
-3. Implement only task **1.4** (functional File/Edit/View/Help menus and top
-   toolbar; no dead entries).
+3. Implement only task **1.5** (properties panel shell: collapsible/resizable,
+   section headers, real empty state, in-session width behavior).
 4. Verify format, clippy, tests, build, and `timeout 8 ./target/debug/epsilon`.
 5. Update this file, `ROADMAP.md`, `CHANGELOG.md`, then commit and push.
 

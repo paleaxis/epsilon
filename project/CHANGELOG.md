@@ -4,6 +4,15 @@ Notable changes, newest first. Version sections are added at release time.
 
 ## [Unreleased]
 
+### Added — 2026-11-22 (task 1.4)
+
+- Menu bar rebuilt around working actions only: File → Quit, View → Dark mode,
+  Help → About Epsilon.
+- Top toolbar now hosts the app identity, theme toggle and About button; the
+  document title remains visible.
+- Shared action helpers for theme toggling, About and Quit, covered by tests
+  (including Quit emitting `ViewportCommand::Close`).
+
 ### Added — 2026-11-22 (task 1.8, done out of order)
 
 - eframe persistence enabled; theme and active tool are saved to the app storage

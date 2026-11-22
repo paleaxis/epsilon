@@ -263,3 +263,22 @@ persistence feature. Storage keys and serde defaults must stay backward
 compatible; incompatible schema changes need a new key or migration. Window and
 panel restoration is framework behavior, so it is verified by inspecting the
 `app.ron` payload rather than re-measuring a tiled native window.
+
+---
+
+## D-014 — Menus expose only working actions (2026-11-22)
+
+**Context.** Task 1.4 asks for File/Edit/View/Help menus, but acceptance also
+forbids dead or placeholder entries. At Stage 1, File has nothing beyond Quit and
+Edit has no working commands until Stage 4.
+
+**Decision.** The menu bar shows File (Quit), View (theme) and Help (About). The
+Edit menu is omitted until undo/clipboard actions exist; File gains New/Open/Save
+in Stage 5. Actions live in small shared helpers (`toggle_theme`, `open_about`,
+`request_quit`) used by both menus and toolbar, so each visible entry has a
+tested implementation. About is available from Help and the toolbar; the theme
+toggle appears in View and the toolbar.
+
+**Consequences.** Menus grow stage by stage instead of showing disabled or fake
+commands. Empty menus are not allowed; when an action becomes available, add it
+to the relevant menu, wire it to the shared helper and test it.

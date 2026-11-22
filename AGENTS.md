@@ -60,6 +60,9 @@ that is explicitly out of scope until the whiteboard is genuinely usable.
   storage keys stable, make new fields `#[serde(default)]`, and treat missing or
   corrupt storage as defaults rather than an error. Never store document data
   there; documents get files in Stage 5.
+- Menus and toolbars may only expose actions that actually work. Hide
+  not-yet-implemented commands (no disabled placeholders); wire new actions
+  through shared helpers and test them.
 - Comments explain *why*, not *what*. Do not leave dead code, stub UIs, or
   placeholder features presented as complete.
 
