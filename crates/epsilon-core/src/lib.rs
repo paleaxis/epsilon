@@ -14,3 +14,4 @@
 //! - `export` — PNG/SVG export (Stage 6).
 
 pub mod geometry;
+pub mod viewport;

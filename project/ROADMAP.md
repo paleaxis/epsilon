@@ -148,13 +148,16 @@ and keyboard-focus walkthrough are documented below rather than executed.
 
 ## Stage 2 — Canvas engine
 
-### [ ] 2.1 — Viewport model and transforms (core)
+### [x] 2.1 — Viewport model and transforms (core)
 
 `Viewport { offset, zoom }` with world↔screen conversion, cursor-anchored zoom,
 zoom clamping (0.1–30), fit-bounds. No egui types.
 
 Acceptance: unit tests for round-trip conversion, anchor invariance under zoom,
 clamping, and fit-to-rect.
+
+Completed 2026-11-22: `epsilon-core::viewport::Viewport` implements world/screen
+conversion, cursor-anchored zoom, clamping and fit-to-rect with 14 unit tests.
 
 ### [ ] 2.2 — Canvas widget and coordinate pipeline
 

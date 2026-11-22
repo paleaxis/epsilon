@@ -4,6 +4,11 @@ Notable changes, newest first. Version sections are added at release time.
 
 ## [Unreleased]
 
+### Added — 2026-11-22 (task 2.1)
+
+- `epsilon-core::viewport::Viewport` with world↔screen transforms,
+  cursor-anchored zoom, zoom clamping (0.1–30) and fit-to-rect.
+
 ### Changed — 2026-11-22 (task 1.9)
 
 - Tidied tool-rail spacing and separators and compacted status-bar typography.

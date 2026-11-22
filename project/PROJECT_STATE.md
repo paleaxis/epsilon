@@ -1,9 +1,9 @@
 # Project State
 
 Last updated: 2026-11-22
-Current stage: **Stage 2 — Canvas engine (starting)**
-Last completed task: **1.9 — Shell polish and manual verification pass**
-Next task: **2.1 — Viewport model and transforms (core)**
+Current stage: **Stage 2 — Canvas engine**
+Last completed task: **2.1 — Viewport model and transforms (core)**
+Next task: **2.2 — Canvas widget and coordinate pipeline**
 
 ## Status
 
@@ -71,7 +71,7 @@ Other shell behavior:
 | --- | --- |
 | `cargo fmt --all -- --check` | exit 0 |
 | `cargo clippy --workspace --all-targets -- -D warnings` | exit 0 |
-| `cargo test --workspace` | **36 passed, 0 failed** (25 app, 11 core) |
+| `cargo test --workspace` | **47 passed, 0 failed** (25 app, 22 core) |
 | `cargo build --workspace` | success, no warnings |
 | `timeout 8 ./target/debug/epsilon` | exit 124 (alive, no stderr) |
 
@@ -90,6 +90,7 @@ behind them are tested.
 - Status bar reports active tool, pointer/zoom placeholders and app version.
 - Central shortcut registry and F1/? help overlay.
 - Stage 1 shell polish (spacing, separators, compact status text).
+- Core viewport model with world/screen transforms and zoom clamping.
 - Persisted theme/tool; eframe-persisted window geometry and panel widths.
 - Tool palette with shortcuts, painted icons and accessible names.
 - Dark/light themes with central palette and contrast tests.
@@ -132,8 +133,9 @@ automation allowed). Items requiring a human reviewer:
 
 1. Read `AGENTS.md`, `project/ROADMAP.md`, this file, `project/DECISIONS.md`.
 2. `git status` must be clean; run `cargo test --workspace` for the baseline.
-3. Implement only task **2.1** (viewport model and transforms in core:
-   world↔screen conversion, cursor-anchored zoom, clamping, fit-bounds).
+3. Implement only task **2.2** (canvas widget and coordinate pipeline:
+   allocate canvas rect, paint background, map pointer through viewport,
+   draw world-origin marker).
 4. Verify format, clippy, tests, build, and `timeout 8 ./target/debug/epsilon`.
 5. Update this file, `ROADMAP.md`, `CHANGELOG.md`, then commit and push.
 

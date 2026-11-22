@@ -320,3 +320,21 @@ bindings and tool coverage are tested.
 **Consequences.** New shortcuts are added in one place and appear in help
 automatically. Panels and menus can later consume the same table instead of
 reimplementing key checks.
+
+---
+
+## D-017 — Viewport convention and transform API (2026-11-22)
+
+**Context.** Task 2.1 introduces the first canvas camera. The convention must
+be simple, testable and free of egui types.
+
+**Decision.** `Viewport { offset, zoom }` treats `offset` as the screen-space
+position of the world origin and `zoom` as the world-to-screen scale.
+`world_to_screen(p) = p * zoom + offset`; `screen_to_world(p) = (p - offset) /
+zoom`. Zoom is clamped to `[0.1, 30]`. Cursor-anchored zoom keeps the world
+point under the cursor fixed. `fit_to_rect` (aliased `fit_bounds`) centers a
+world rect in a screen size with a small margin.
+
+**Consequences.** Conversion is a closed-form, invertible pair with no matrix
+type. The app can later drive these methods from pointer events without adding
+UI dependencies to core.
