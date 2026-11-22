@@ -4,6 +4,11 @@ Notable changes, newest first. Version sections are added at release time.
 
 ## [Unreleased]
 
+### Added — 2026-11-22 (task 2.6)
+
+- Explicit idle/panning/dragging pointer state machine for the canvas.
+- Hover tracking and canvas-only pan starts; world coordinates remain `f64`.
+
 ### Added — 2026-11-22 (task 2.5)
 
 - Adaptive canvas grid with View-menu and properties-panel toggles.

@@ -2,8 +2,8 @@
 
 Last updated: 2026-11-22
 Current stage: **Stage 2 — Canvas engine**
-Last completed task: **2.5 — Optional grid**
-Next task: **2.6 — Pointer input state machine**
+Last completed task: **2.6 — Pointer input state machine**
+Next task: **2.7 — Tool framework**
 
 ## Status
 
@@ -71,7 +71,7 @@ Other shell behavior:
 | --- | --- |
 | `cargo fmt --all -- --check` | exit 0 |
 | `cargo clippy --workspace --all-targets -- -D warnings` | exit 0 |
-| `cargo test --workspace` | **54 passed, 0 failed** (25 app, 29 core) |
+| `cargo test --workspace` | **56 passed, 0 failed** (27 app, 29 core) |
 | `cargo build --workspace` | success, no warnings |
 | `timeout 8 ./target/debug/epsilon` | exit 124 (alive, no stderr) |
 
@@ -95,6 +95,7 @@ behind them are tested.
 - Canvas panning with middle/space/hand-tool drags.
 - Cursor-anchored zoom, wheel scrolling and zoom shortcuts/buttons.
 - Optional adaptive grid with toggle and snapping helpers.
+- Explicit idle/panning/dragging pointer state machine with hover tracking.
 - Persisted theme/tool; eframe-persisted window geometry and panel widths.
 - Tool palette with shortcuts, painted icons and accessible names.
 - Dark/light themes with central palette and contrast tests.
@@ -137,8 +138,8 @@ automation allowed). Items requiring a human reviewer:
 
 1. Read `AGENTS.md`, `project/ROADMAP.md`, this file, `project/DECISIONS.md`.
 2. `git status` must be clean; run `cargo test --workspace` for the baseline.
-3. Implement only task **2.6** (pointer input state machine: idle/panning/
-   dragging, hover tracking, captures/modifiers/focus).
+3. Implement only task **2.7** (tool framework: tool trait, registry,
+   activation, cursor, status, shortcuts).
 4. Verify format, clippy, tests, build, and `timeout 8 ./target/debug/epsilon`.
 5. Update this file, `ROADMAP.md`, `CHANGELOG.md`, then commit and push.
 

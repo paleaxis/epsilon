@@ -25,6 +25,20 @@ struct PersistedSettings {
     grid_enabled: bool,
 }
 
+/// High-level pointer interaction mode for the canvas.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PointerMode {
+    Idle,
+    Panning {
+        last: egui::Pos2,
+    },
+    // Reserved for Stage 3 canvas object dragging.
+    #[allow(dead_code)]
+    Dragging {
+        start: egui::Pos2,
+    },
+}
+
 /// Root application object and native shell.
 ///
 /// This is the Stage 1 shell: regions are laid out and themed, with the tool
@@ -49,10 +63,10 @@ pub struct EpsilonApp {
     grid_enabled: bool,
     /// Last canvas rect, used by toolbar zoom controls.
     canvas_rect: egui::Rect,
-    /// Whether a pan gesture is currently active.
-    panning: bool,
-    /// Last pointer position (screen space) seen during a pan gesture.
-    pan_last: Option<egui::Pos2>,
+    /// Current pointer interaction mode for the canvas.
+    pointer_mode: PointerMode,
+    /// Last known pointer position in screen space, including outside canvas.
+    hover_screen: Option<egui::Pos2>,
 }
 
 impl Default for EpsilonApp {
@@ -67,8 +81,8 @@ impl Default for EpsilonApp {
             pointer_world: None,
             canvas_rect: egui::Rect::NOTHING,
             grid_enabled: false,
-            panning: false,
-            pan_last: None,
+            pointer_mode: PointerMode::Idle,
+            hover_screen: None,
         }
     }
 }
@@ -468,6 +482,7 @@ impl EpsilonApp {
 
     fn update_pan(&mut self, ctx: &egui::Context, canvas_rect: egui::Rect) {
         let pointer_pos = ctx.pointer_hover_pos();
+        self.hover_screen = pointer_pos;
         let in_canvas = pointer_pos.is_some_and(|pos| canvas_rect.contains(pos));
         let any_down = ctx.input(|input| input.pointer.any_down());
         let middle_pressed =
@@ -476,37 +491,42 @@ impl EpsilonApp {
         let space_down = ctx.input(|input| input.key_down(egui::Key::Space));
         let typing = ctx.egui_wants_keyboard_input();
 
-        if self.panning {
-            if !any_down {
-                self.panning = false;
-                self.pan_last = None;
-            } else if let Some(pos) = pointer_pos {
-                if let Some(last) = self.pan_last {
+        match self.pointer_mode {
+            PointerMode::Panning { last } => {
+                if !any_down {
+                    self.pointer_mode = PointerMode::Idle;
+                } else if let Some(pos) = pointer_pos {
                     self.viewport.offset.x += (pos.x - last.x) as f64;
                     self.viewport.offset.y += (pos.y - last.y) as f64;
+                    self.pointer_mode = PointerMode::Panning { last: pos };
                 }
-                self.pan_last = Some(pos);
             }
-        } else {
-            let start_pan = if middle_pressed && in_canvas {
-                true
-            } else if primary_pressed && in_canvas {
-                if self.tool == Tool::Hand {
+            PointerMode::Idle => {
+                let start_pan = if middle_pressed && in_canvas {
                     true
+                } else if primary_pressed && in_canvas {
+                    if self.tool == Tool::Hand {
+                        true
+                    } else {
+                        space_down && !typing
+                    }
                 } else {
-                    space_down && !typing
-                }
-            } else {
-                false
-            };
+                    false
+                };
 
-            if start_pan {
-                self.panning = true;
-                self.pan_last = pointer_pos;
+                if start_pan && let Some(pos) = pointer_pos {
+                    self.pointer_mode = PointerMode::Panning { last: pos };
+                }
+            }
+            PointerMode::Dragging { .. } => {
+                if !any_down {
+                    self.pointer_mode = PointerMode::Idle;
+                }
             }
         }
 
-        let cursor = if self.panning {
+        let panning = matches!(self.pointer_mode, PointerMode::Panning { .. });
+        let cursor = if panning {
             egui::CursorIcon::Grabbing
         } else if self.tool == Tool::Hand || (space_down && !typing) {
             egui::CursorIcon::Grab
@@ -514,7 +534,7 @@ impl EpsilonApp {
             egui::CursorIcon::Default
         };
 
-        if in_canvas || self.panning {
+        if in_canvas || panning {
             ctx.set_cursor_icon(cursor);
         }
     }
@@ -960,6 +980,43 @@ mod tests {
         let restored = EpsilonApp::from_storage(Some(&storage));
         assert_eq!(restored.theme, Theme::Dark);
         assert_eq!(restored.tool, Tool::Select);
+    }
+
+    #[test]
+    fn pointer_mode_pans_with_middle_click() {
+        let ctx = egui::Context::default();
+        theme::apply(&ctx, Theme::Dark);
+        let mut app = EpsilonApp::default();
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(720.0, 480.0));
+        let input = egui::RawInput {
+            screen_rect: Some(screen),
+            events: vec![
+                egui::Event::PointerMoved(egui::pos2(100.0, 100.0)),
+                egui::Event::PointerButton {
+                    pos: egui::pos2(100.0, 100.0),
+                    button: egui::PointerButton::Middle,
+                    pressed: true,
+                    modifiers: Default::default(),
+                },
+            ],
+            ..Default::default()
+        };
+        let output = ctx.run_ui(input, |ui| {
+            let _ = app.show_shell(ui);
+        });
+        output.drop_without_applying_deltas();
+        assert!(matches!(app.pointer_mode, PointerMode::Panning { .. }));
+    }
+
+    #[test]
+    fn pointer_mode_dragging_variant_is_representable() {
+        let app = EpsilonApp {
+            pointer_mode: PointerMode::Dragging {
+                start: egui::Pos2::ZERO,
+            },
+            ..Default::default()
+        };
+        assert!(matches!(app.pointer_mode, PointerMode::Dragging { .. }));
     }
 
     #[test]

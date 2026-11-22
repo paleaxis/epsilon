@@ -403,3 +403,19 @@ and status bar.
 **Consequences.** Grid spacing changes in stable, predictable steps and snapping
 stays consistent with the visible grid. Rendering cost is bounded by the minimum
 on-screen spacing.
+
+---
+
+## D-022 — Pointer interaction uses an explicit mode (2026-11-22)
+
+**Context.** Task 2.6 requires idle/panning/dragging states, hover tracking,
+correct capture/modifier/focus handling, and accurate coordinates.
+
+**Decision.** `EpsilonApp::pointer_mode` is an enum rather than a boolean plus
+optional last position. Panning starts only when the pointer is inside the
+canvas and the relevant button/modifier conditions hold; space-pan is disabled
+while egui wants keyboard input. Hover position is tracked separately, and
+viewport math stays in `f64`.
+
+**Consequences.** Pointer state is explicit and testable, panel widgets cannot
+start a canvas pan, and panning remains stable at extreme zoom/pan values.

@@ -211,13 +211,18 @@ Completed 2026-11-22: adaptive line grid uses `epsilon-core::grid`, toggles from
 View menu and the properties panel, and reports state in the status bar. Core
 tests cover grid-step selection and snapping.
 
-### [ ] 2.6 — Pointer input state machine
+### [x] 2.6 — Pointer input state machine
 
 Explicit idle/panning/dragging state in the app layer; hover tracking; correct
 handling of captures, modifiers, and focus; status bar live coordinates.
 
 Acceptance: state machine unit-tested; input does not leak into panel widgets;
 coordinates accurate at extreme zoom/pan.
+
+Completed 2026-11-22: canvas pointer interaction now uses an explicit
+`PointerMode` state machine, tracks hover position, starts panning only inside
+the canvas, and keeps world coordinates in `f64` for extreme zoom/pan. Unit
+and frame tests cover middle-click panning and the dragging state.
 
 ---
 
