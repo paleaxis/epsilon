@@ -4,6 +4,11 @@ Notable changes, newest first. Version sections are added at release time.
 
 ## [Unreleased]
 
+### Added — 2026-11-23 (task 3.4)
+
+- Diamond tool with drag preview and document rendering.
+- Core `Rect::diamond_points` geometry for the inscribed diamond polygon.
+
 ### Added — 2026-11-23 (task 3.3)
 
 - Ellipse tool with drag preview and document rendering.

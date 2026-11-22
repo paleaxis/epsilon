@@ -163,6 +163,18 @@ impl Rect {
         self.min.lerp(self.max, 0.5)
     }
 
+    /// Vertices of the diamond inscribed in this rectangle, clockwise from the
+    /// top edge midpoint.
+    pub fn diamond_points(&self) -> [Point; 4] {
+        let center = self.center();
+        [
+            Point::new(center.x, self.min.y),
+            Point::new(self.max.x, center.y),
+            Point::new(center.x, self.max.y),
+            Point::new(self.min.x, center.y),
+        ]
+    }
+
     /// `true` if either dimension has zero area.
     pub fn is_empty(&self) -> bool {
         self.width() <= 0.0 || self.height() <= 0.0
@@ -274,6 +286,23 @@ mod tests {
         assert_eq!(rect.size(), Point::new(20.0, 10.0));
         assert!(!rect.is_empty());
         assert!(Rect::default().is_empty());
+    }
+
+    #[test]
+    fn diamond_points_inscribe_rectangle_edges() {
+        let rect = Rect::from_xywh(10.0, 20.0, 80.0, 40.0);
+        assert_eq!(
+            rect.diamond_points(),
+            [
+                Point::new(50.0, 20.0),
+                Point::new(90.0, 40.0),
+                Point::new(50.0, 60.0),
+                Point::new(10.0, 40.0),
+            ]
+        );
+
+        let points = rect.diamond_points();
+        assert_eq!(Rect::from_points(points), Some(rect));
     }
 
     #[test]

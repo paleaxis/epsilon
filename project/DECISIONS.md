@@ -468,3 +468,20 @@ Preview and document rendering switch on the kind.
 **Consequences.** Both tools share one drag pipeline, the committed shape cannot
 change if the active tool changes mid-drag, and new drag-created tools only need
 a mapping and a render arm.
+
+---
+
+## D-026 — Diamond vertices are canonical core geometry (2026-11-23)
+
+**Context.** Task 3.4 needs a diamond that is a polygon inscribed in the
+element's bounds, with unit-tested geometry and rendering that stays aligned at
+every zoom.
+
+**Decision.** `Rect::diamond_points` returns the four edge-midpoint vertices in
+core, clockwise from the top. The app projects those world-space vertices
+through the viewport for both committed elements and the live drag preview.
+
+**Consequences.** The polygon definition is shared and UI-independent, and
+because rendering derives its vertices from the element bounds that future hit
+testing and export will use, no separate screen-space diamond math can drift.
+Other polygon shapes can follow the same pattern.

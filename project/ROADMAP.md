@@ -269,11 +269,17 @@ and document renderer draw ellipses inscribed in their element bounds, and the
 minimum-size discard applies to zero/small drags. Frame and projection tests
 cover ellipse creation at extreme zoom.
 
-### [ ] 3.4 — Diamond tool
+### [x] 3.4 — Diamond tool
 
 Diamond rendered as polygon inscribed in element bounds.
 
 Acceptance: geometry unit-tested; rendering consistent with bounds.
+
+Completed 2026-11-23: `Rect::diamond_points` returns the four edge-midpoint
+vertices in core, with unit tests covering the vertices and their bounds. The
+Diamond tool uses the shared drag pipeline, and document/preview rendering
+project those vertices through the viewport; a zoomed projection test confirms
+they coincide with the element's screen bounds.
 
 ### [ ] 3.5 — Line tool
 

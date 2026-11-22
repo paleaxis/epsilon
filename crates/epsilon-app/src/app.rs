@@ -49,6 +49,7 @@ fn drawing_kind(tool: Tool) -> Option<ElementKind> {
     match tool {
         Tool::Rectangle => Some(ElementKind::Rectangle),
         Tool::Ellipse => Some(ElementKind::Ellipse),
+        Tool::Diamond => Some(ElementKind::Diamond),
         _ => None,
     }
 }
@@ -74,6 +75,25 @@ fn element_screen_rect(
             canvas_rect.min.y + max.y as f32,
         ),
     )
+}
+
+/// Projects an element's inscribed diamond into screen space.
+fn diamond_screen_points(
+    canvas_rect: egui::Rect,
+    viewport: &Viewport,
+    bounds: Rect,
+) -> Vec<egui::Pos2> {
+    bounds
+        .diamond_points()
+        .into_iter()
+        .map(|point| {
+            let screen = viewport.world_to_screen(point);
+            egui::pos2(
+                canvas_rect.min.x + screen.x as f32,
+                canvas_rect.min.y + screen.y as f32,
+            )
+        })
+        .collect()
 }
 
 /// Projects a draft drag's world bounds into screen space.
@@ -698,6 +718,19 @@ impl EpsilonApp {
                     }
                     painter.add(egui::Shape::ellipse_stroke(center, radius, stroke));
                 }
+                ElementKind::Diamond => {
+                    let bounds =
+                        Rect::from_xywh(element.x, element.y, element.width, element.height);
+                    let points = diamond_screen_points(canvas_rect, &self.viewport, bounds);
+                    if fill.a() > 0 {
+                        painter.add(egui::Shape::convex_polygon(
+                            points.clone(),
+                            fill,
+                            egui::Stroke::NONE,
+                        ));
+                    }
+                    painter.add(egui::Shape::closed_line(points, stroke));
+                }
                 _ => {}
             }
         }
@@ -730,6 +763,19 @@ impl EpsilonApp {
                     painter.add(egui::Shape::ellipse_stroke(
                         center,
                         radius,
+                        egui::Stroke::new(1.0, accent),
+                    ));
+                }
+                ElementKind::Diamond => {
+                    let bounds = Rect::from_corners(start, current);
+                    let points = diamond_screen_points(canvas_rect, &self.viewport, bounds);
+                    painter.add(egui::Shape::convex_polygon(
+                        points.clone(),
+                        fill,
+                        egui::Stroke::NONE,
+                    ));
+                    painter.add(egui::Shape::closed_line(
+                        points,
                         egui::Stroke::new(1.0, accent),
                     ));
                 }
@@ -1190,6 +1236,18 @@ mod tests {
     }
 
     #[test]
+    fn diamond_drag_commits_on_release() {
+        let app = drag_shape_on_canvas(Tool::Diamond);
+        assert_eq!(app.document.elements.len(), 1);
+        let element = &app.document.elements[0];
+        assert_eq!(element.kind, ElementKind::Diamond);
+        let expected_width = 80.0 / app.viewport.zoom;
+        let expected_height = 60.0 / app.viewport.zoom;
+        assert!((element.width - expected_width).abs() < 0.01);
+        assert!((element.height - expected_height).abs() < 0.01);
+    }
+
+    #[test]
     fn rectangle_commit_stores_normalized_world_bounds() {
         let mut app = EpsilonApp {
             viewport: Viewport {
@@ -1254,6 +1312,40 @@ mod tests {
             assert!((actual.min.y - expected.min.y).abs() < 0.01);
             assert!((actual.width() - expected.width()).abs() < 0.01);
             assert!((actual.height() - expected.height()).abs() < 0.01);
+        }
+    }
+
+    #[test]
+    fn diamond_screen_points_touch_element_bounds_at_zoom() {
+        let canvas = egui::Rect::from_min_size(egui::pos2(10.0, 20.0), egui::vec2(800.0, 600.0));
+        let element = Element::with_id(
+            epsilon_core::document::ElementId::new(1),
+            ElementKind::Diamond,
+            100.0,
+            200.0,
+            50.0,
+            30.0,
+        );
+
+        for (zoom, offset) in [
+            (0.1, Point::new(10.0, 20.0)),
+            (10.0, Point::new(-100.0, -200.0)),
+        ] {
+            let viewport = Viewport { offset, zoom };
+            let screen = element_screen_rect(canvas, &viewport, &element);
+            let bounds = Rect::from_xywh(element.x, element.y, element.width, element.height);
+            let points = diamond_screen_points(canvas, &viewport, bounds);
+            let expected = [
+                egui::pos2(screen.center().x, screen.top()),
+                egui::pos2(screen.right(), screen.center().y),
+                egui::pos2(screen.center().x, screen.bottom()),
+                egui::pos2(screen.left(), screen.center().y),
+            ];
+
+            for (point, expected) in points.into_iter().zip(expected) {
+                assert!((point.x - expected.x).abs() < 0.01);
+                assert!((point.y - expected.y).abs() < 0.01);
+            }
         }
     }
 
