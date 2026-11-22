@@ -354,3 +354,20 @@ status bar. The viewport remains in memory only; persistence is not added yet.
 **Consequences.** The marker gives a fixed world-space reference for later
 pan/zoom checks. Status-bar coordinates can be compared directly against
 `Viewport::screen_to_world`.
+
+---
+
+## D-019 — Pan state lives in the app layer (2026-11-22)
+
+**Context.** Task 2.3 adds panning without a full input state machine yet
+(Stage 2.6).
+
+**Decision.** Pan state is a small pair of fields on `EpsilonApp`
+(`panning`, `pan_last`) plus the existing `Viewport`. Screen-space deltas are
+added directly to `Viewport::offset`, giving 1:1 motion at any zoom. Space-based
+panning is disabled while `Context::egui_wants_keyboard_input()` is true. No
+pointer capture API is used; the drag ends when no pointer button is down.
+
+**Consequences.** The implementation is simple and reversible. Stage 2.6 can
+replace these fields with a proper state machine without changing the viewport
+API.

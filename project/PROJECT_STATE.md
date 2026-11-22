@@ -2,8 +2,8 @@
 
 Last updated: 2026-11-22
 Current stage: **Stage 2 — Canvas engine**
-Last completed task: **2.2 — Canvas widget and coordinate pipeline**
-Next task: **2.3 — Panning**
+Last completed task: **2.3 — Panning**
+Next task: **2.4 — Zoom**
 
 ## Status
 
@@ -92,6 +92,7 @@ behind them are tested.
 - Stage 1 shell polish (spacing, separators, compact status text).
 - Core viewport model with world/screen transforms and zoom clamping.
 - Canvas widget with background, pointer-to-world mapping and origin marker.
+- Canvas panning with middle/space/hand-tool drags.
 - Persisted theme/tool; eframe-persisted window geometry and panel widths.
 - Tool palette with shortcuts, painted icons and accessible names.
 - Dark/light themes with central palette and contrast tests.
@@ -134,8 +135,8 @@ automation allowed). Items requiring a human reviewer:
 
 1. Read `AGENTS.md`, `project/ROADMAP.md`, this file, `project/DECISIONS.md`.
 2. `git status` must be clean; run `cargo test --workspace` for the baseline.
-3. Implement only task **2.3** (panning: middle-button drag, space+drag,
-   hand tool drag; pointer capture and cursor feedback).
+3. Implement only task **2.4** (zoom: Ctrl+wheel/pinch anchored at cursor,
+   +/- buttons and shortcuts, reset/fit-to-content, wheel scrolling).
 4. Verify format, clippy, tests, build, and `timeout 8 ./target/debug/epsilon`.
 5. Update this file, `ROADMAP.md`, `CHANGELOG.md`, then commit and push.
 

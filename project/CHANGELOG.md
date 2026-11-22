@@ -4,6 +4,12 @@ Notable changes, newest first. Version sections are added at release time.
 
 ## [Unreleased]
 
+### Added — 2026-11-22 (task 2.3)
+
+- Canvas panning via middle-button drag, space+drag and hand-tool drag.
+- Viewport offset updates 1:1 with screen-space pointer motion; cursor feedback
+  for pan modes.
+
 ### Added — 2026-11-22 (task 2.2)
 
 - Canvas widget allocates its rect, paints the scene background, tracks the

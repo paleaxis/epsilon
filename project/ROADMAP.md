@@ -173,13 +173,18 @@ background, tracks the pointer in world coordinates for the status bar, and
 draws a world-origin marker through `Viewport`. Panning/zooming arrive in 2.3
 and 2.4; the marker is stationary until then.
 
-### [ ] 2.3 — Panning
+### [x] 2.3 — Panning
 
 Middle-button drag, space+drag, and hand tool drag; correct pointer capture and
 cursor feedback; no pan while typing in text fields.
 
 Acceptance: pan is 1:1 with pointer motion at any zoom; releasing outside the
 window ends the drag cleanly.
+
+Completed 2026-11-22: canvas panning supports middle-button drag, space+drag and
+hand-tool drag. Screen-space deltas update the viewport offset directly, space
+panning is disabled while a widget owns keyboard input, and cursor feedback is
+provided.
 
 ### [ ] 2.4 — Zoom
 

@@ -42,6 +42,10 @@ pub struct EpsilonApp {
     /// Last pointer position in world coordinates, if the pointer is over the
     /// canvas. Drives the status-bar readout.
     pointer_world: Option<Point>,
+    /// Whether a pan gesture is currently active.
+    panning: bool,
+    /// Last pointer position (screen space) seen during a pan gesture.
+    pan_last: Option<egui::Pos2>,
 }
 
 impl Default for EpsilonApp {
@@ -54,6 +58,8 @@ impl Default for EpsilonApp {
             help_open: false,
             viewport: Viewport::default(),
             pointer_world: None,
+            panning: false,
+            pan_last: None,
         }
     }
 }
@@ -374,6 +380,59 @@ impl EpsilonApp {
         }
     }
 
+    fn update_pan(&mut self, ctx: &egui::Context, canvas_rect: egui::Rect) {
+        let pointer_pos = ctx.pointer_hover_pos();
+        let in_canvas = pointer_pos.is_some_and(|pos| canvas_rect.contains(pos));
+        let any_down = ctx.input(|input| input.pointer.any_down());
+        let middle_pressed =
+            ctx.input(|input| input.pointer.button_pressed(egui::PointerButton::Middle));
+        let primary_pressed = ctx.input(|input| input.pointer.primary_pressed());
+        let space_down = ctx.input(|input| input.key_down(egui::Key::Space));
+        let typing = ctx.egui_wants_keyboard_input();
+
+        if self.panning {
+            if !any_down {
+                self.panning = false;
+                self.pan_last = None;
+            } else if let Some(pos) = pointer_pos {
+                if let Some(last) = self.pan_last {
+                    self.viewport.offset.x += (pos.x - last.x) as f64;
+                    self.viewport.offset.y += (pos.y - last.y) as f64;
+                }
+                self.pan_last = Some(pos);
+            }
+        } else {
+            let start_pan = if middle_pressed && in_canvas {
+                true
+            } else if primary_pressed && in_canvas {
+                if self.tool == Tool::Hand {
+                    true
+                } else {
+                    space_down && !typing
+                }
+            } else {
+                false
+            };
+
+            if start_pan {
+                self.panning = true;
+                self.pan_last = pointer_pos;
+            }
+        }
+
+        let cursor = if self.panning {
+            egui::CursorIcon::Grabbing
+        } else if self.tool == Tool::Hand || (space_down && !typing) {
+            egui::CursorIcon::Grab
+        } else {
+            egui::CursorIcon::Default
+        };
+
+        if in_canvas || self.panning {
+            ctx.set_cursor_icon(cursor);
+        }
+    }
+
     fn status_bar(&self, ui: &mut egui::Ui) {
         egui::Panel::bottom("status_bar")
             .exact_size(layout::STATUS_BAR_HEIGHT)
@@ -424,6 +483,8 @@ impl EpsilonApp {
                         None
                     }
                 });
+
+                self.update_pan(ui.ctx(), rect);
 
                 // Prove the coordinate pipeline: the world origin is projected
                 // through the viewport and marked on screen.
