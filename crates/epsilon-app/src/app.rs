@@ -1,5 +1,8 @@
 use eframe::egui::{self, Align, Layout, RichText};
 
+use epsilon_core::geometry::Point;
+use epsilon_core::viewport::Viewport;
+
 use crate::layout;
 use crate::theme::{self, Theme};
 use crate::tools::{self, Tool};
@@ -34,6 +37,11 @@ pub struct EpsilonApp {
     properties_open: bool,
     /// Whether the keyboard-shortcut help overlay is open.
     help_open: bool,
+    /// Canvas camera. In-memory only for now; persistence can come later.
+    viewport: Viewport,
+    /// Last pointer position in world coordinates, if the pointer is over the
+    /// canvas. Drives the status-bar readout.
+    pointer_world: Option<Point>,
 }
 
 impl Default for EpsilonApp {
@@ -44,6 +52,8 @@ impl Default for EpsilonApp {
             tool: Tool::default(),
             properties_open: true,
             help_open: false,
+            viewport: Viewport::default(),
+            pointer_world: None,
         }
     }
 }
@@ -375,9 +385,17 @@ impl EpsilonApp {
                             .weak(),
                     );
                     ui.add_space(12.0);
-                    ui.label(RichText::new("Pointer: —").small().weak());
+                    let pointer_text = match self.pointer_world {
+                        Some(point) => format!("Pointer: {:.1}, {:.1}", point.x, point.y),
+                        None => "Pointer: —".to_owned(),
+                    };
+                    ui.label(RichText::new(pointer_text).small().weak());
                     ui.add_space(12.0);
-                    ui.label(RichText::new("Zoom: —").small().weak());
+                    ui.label(
+                        RichText::new(format!("Zoom: {:.0}%", self.viewport.zoom * 100.0))
+                            .small()
+                            .weak(),
+                    );
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         ui.label(
                             RichText::new(concat!("Epsilon ", env!("CARGO_PKG_VERSION"))).weak(),
@@ -388,20 +406,52 @@ impl EpsilonApp {
     }
 
     /// Draws the canvas region and returns its screen rect for input mapping.
-    fn canvas(&self, ui: &mut egui::Ui) -> egui::Rect {
+    fn canvas(&mut self, ui: &mut egui::Ui) -> egui::Rect {
         let background = ui.visuals().extreme_bg_color;
-        egui::CentralPanel::default()
+        let response = egui::CentralPanel::default()
             .frame(egui::Frame::NONE.fill(background))
             .show(ui, |ui| {
-                ui.add_space((ui.available_height() * 0.3).max(0.0));
-                ui.vertical_centered(|ui| {
-                    ui.heading(RichText::new("Canvas").weak());
-                    ui.add_space(6.0);
-                    ui.label(RichText::new("The infinite canvas arrives in Stage 2.").weak());
+                let rect = ui.max_rect();
+
+                // Track the pointer in world coordinates for the status bar.
+                self.pointer_world = ui.ctx().pointer_hover_pos().and_then(|pos| {
+                    if rect.contains(pos) {
+                        Some(self.viewport.screen_to_world(Point::new(
+                            (pos.x - rect.min.x) as f64,
+                            (pos.y - rect.min.y) as f64,
+                        )))
+                    } else {
+                        None
+                    }
                 });
-            })
-            .response
-            .rect
+
+                // Prove the coordinate pipeline: the world origin is projected
+                // through the viewport and marked on screen.
+                let origin = self.viewport.world_to_screen(Point::ZERO);
+                let origin_pos =
+                    egui::pos2(rect.min.x + origin.x as f32, rect.min.y + origin.y as f32);
+                if rect.contains(origin_pos) {
+                    let painter = ui.painter();
+                    let color = ui.visuals().text_color();
+                    painter.circle_filled(origin_pos, 4.0, color);
+                    painter.line_segment(
+                        [
+                            egui::pos2(origin_pos.x - 10.0, origin_pos.y),
+                            egui::pos2(origin_pos.x + 10.0, origin_pos.y),
+                        ],
+                        egui::Stroke::new(1.0, color),
+                    );
+                    painter.line_segment(
+                        [
+                            egui::pos2(origin_pos.x, origin_pos.y - 10.0),
+                            egui::pos2(origin_pos.x, origin_pos.y + 10.0),
+                        ],
+                        egui::Stroke::new(1.0, color),
+                    );
+                }
+            });
+
+        response.response.rect
     }
 
     /// Lays out every shell region in the required order and returns the canvas

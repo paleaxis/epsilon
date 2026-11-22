@@ -338,3 +338,19 @@ world rect in a screen size with a small margin.
 **Consequences.** Conversion is a closed-form, invertible pair with no matrix
 type. The app can later drive these methods from pointer events without adding
 UI dependencies to core.
+
+---
+
+## D-018 — Canvas origin marker and pointer readout (2026-11-22)
+
+**Context.** Task 2.2 needs visible proof that the viewport pipeline is wired
+into the shell.
+
+**Decision.** The canvas central panel paints its background and projects the
+world origin through `Viewport`, drawing a small marker. Pointer hover positions
+are converted to world coordinates relative to the canvas rect and shown in the
+status bar. The viewport remains in memory only; persistence is not added yet.
+
+**Consequences.** The marker gives a fixed world-space reference for later
+pan/zoom checks. Status-bar coordinates can be compared directly against
+`Viewport::screen_to_world`.

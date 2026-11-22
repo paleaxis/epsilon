@@ -159,7 +159,7 @@ clamping, and fit-to-rect.
 Completed 2026-11-22: `epsilon-core::viewport::Viewport` implements world/screen
 conversion, cursor-anchored zoom, clamping and fit-to-rect with 14 unit tests.
 
-### [ ] 2.2 — Canvas widget and coordinate pipeline
+### [x] 2.2 — Canvas widget and coordinate pipeline
 
 Central canvas widget allocating its rect, painting the scene background, and
 mapping egui pointer positions through the viewport. Draw a world-origin marker
@@ -167,6 +167,11 @@ to prove alignment.
 
 Acceptance: marker stays under the same world point while panning/zooming;
 status bar coordinates match viewport math.
+
+Completed 2026-11-22: canvas now allocates its rect, paints the canvas
+background, tracks the pointer in world coordinates for the status bar, and
+draws a world-origin marker through `Viewport`. Panning/zooming arrive in 2.3
+and 2.4; the marker is stationary until then.
 
 ### [ ] 2.3 — Panning
 

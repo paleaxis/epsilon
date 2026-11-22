@@ -4,6 +4,13 @@ Notable changes, newest first. Version sections are added at release time.
 
 ## [Unreleased]
 
+### Added — 2026-11-22 (task 2.2)
+
+- Canvas widget allocates its rect, paints the scene background, tracks the
+  pointer in world coordinates, and draws a world-origin marker through the
+  viewport.
+- Status bar now shows live world pointer coordinates and zoom percentage.
+
 ### Added — 2026-11-22 (task 2.1)
 
 - `epsilon-core::viewport::Viewport` with world↔screen transforms,

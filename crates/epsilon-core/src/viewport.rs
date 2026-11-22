@@ -104,7 +104,7 @@ impl Viewport {
 
     /// Pans the viewport by a screen-space delta.
     pub fn pan_by(&mut self, delta: Point) {
-        self.offset = self.offset + delta;
+        self.offset += delta;
     }
 
     /// Adjusts the viewport so `rect` fits inside a screen of `screen_size`,
