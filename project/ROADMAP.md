@@ -81,13 +81,18 @@ plus theme/About controls; actions share helpers and are tested. The Edit menu i
 intentionally omitted until Stage 4 provides working actions (no dead entries).
 Keyboard behavior comes from standard egui widgets; it was not automated.
 
-### [ ] 1.5 — Right properties panel shell
+### [x] 1.5 — Right properties panel shell
 
 Collapsible/resizable panel with section headers and a real empty state
 ("No selection") until Stage 3 binds element properties to it.
 
 Acceptance: panel width persists in-session; layout unaffected at minimum window
 size; empty state shown when no selection.
+
+Completed 2026-11-22: properties panel uses `Panel::show_collapsible` with a
+"Hide" control and a "Selection" collapsing section; fixed 200–400px resize
+range retained; empty state shown when there is no selection; collapsed/expanded
+paths render at the 720×480 minimum without panicking.
 
 ### [ ] 1.6 — Status bar
 

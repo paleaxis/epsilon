@@ -22,13 +22,27 @@ struct PersistedSettings {
 /// Root application object and native shell.
 ///
 /// This is the Stage 1 shell: regions are laid out and themed, with the tool
-/// palette and the working menu/toolbar actions. Properties (1.5), live status
-/// readouts (1.6) and the shortcut help overlay (1.7) are filled in later.
-#[derive(Default)]
+/// palette, working menu/toolbar actions and the properties panel shell. Live
+/// status readouts (1.6) and the shortcut help overlay (1.7) are filled in
+/// later.
 pub struct EpsilonApp {
     about_open: bool,
     theme: Theme,
     tool: Tool,
+    /// Whether the right properties panel is expanded. In-session state; the
+    /// panel's width still persists through egui memory.
+    properties_open: bool,
+}
+
+impl Default for EpsilonApp {
+    fn default() -> Self {
+        Self {
+            about_open: false,
+            theme: Theme::default(),
+            tool: Tool::default(),
+            properties_open: true,
+        }
+    }
 }
 
 impl EpsilonApp {
@@ -172,26 +186,45 @@ impl EpsilonApp {
         }
     }
 
-    fn properties_panel(&self, ui: &mut egui::Ui) {
+    fn properties_panel(&mut self, ui: &mut egui::Ui) {
         // The resize range is fixed rather than derived from the current
         // window: transient small frames at startup would otherwise clamp and
         // overwrite the persisted panel width. The compile-time budget in
         // `layout.rs` guarantees the canvas minimum at the window minimum.
+        // `show_collapsible` keeps the panel resizable and lets it slide closed
+        // without losing the persisted width.
+        let mut hide_requested = false;
         egui::Panel::right("properties_panel")
             .resizable(true)
             .default_size(layout::PROPERTIES_PANEL_WIDTH)
             .size_range(layout::PROPERTIES_PANEL_MIN_WIDTH..=layout::PROPERTIES_PANEL_MAX_WIDTH)
-            .show(ui, |ui| {
+            .show_collapsible(ui, &mut self.properties_open, |ui| {
                 ui.add_space(4.0);
-                ui.label(RichText::new("PROPERTIES").small().strong());
-                ui.separator();
-                ui.add_space(12.0);
-                ui.vertical_centered(|ui| {
-                    ui.label(RichText::new("No selection").strong());
-                    ui.add_space(4.0);
-                    ui.label(RichText::new("Select an element to edit its properties.").weak());
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("PROPERTIES").small().strong());
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        if ui.small_button("Hide").clicked() {
+                            hide_requested = true;
+                        }
+                    });
                 });
+                ui.separator();
+                ui.add_space(4.0);
+                egui::CollapsingHeader::new("Selection")
+                    .default_open(true)
+                    .show(ui, |ui| {
+                        ui.vertical_centered(|ui| {
+                            ui.label(RichText::new("No selection").strong());
+                            ui.add_space(4.0);
+                            ui.label(
+                                RichText::new("Select an element to edit its properties.").weak(),
+                            );
+                        });
+                    });
             });
+        if hide_requested {
+            self.properties_open = false;
+        }
     }
 
     fn status_bar(&self, ui: &mut egui::Ui) {
@@ -508,6 +541,32 @@ mod tests {
         app.toggle_theme(&ctx);
         assert_eq!(app.theme, Theme::Dark);
         assert_eq!(ctx.theme(), egui::Theme::Dark);
+    }
+
+    #[test]
+    fn properties_panel_defaults_to_open() {
+        assert!(EpsilonApp::default().properties_open);
+    }
+
+    #[test]
+    fn collapsed_properties_panel_renders() {
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(720.0, 480.0));
+        let ctx = egui::Context::default();
+        theme::apply(&ctx, Theme::Dark);
+        let mut app = EpsilonApp {
+            properties_open: false,
+            ..Default::default()
+        };
+        let output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(screen),
+                ..Default::default()
+            },
+            |ui| {
+                let _ = app.show_shell(ui);
+            },
+        );
+        output.drop_without_applying_deltas();
     }
 
     #[test]

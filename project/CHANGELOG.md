@@ -4,6 +4,14 @@ Notable changes, newest first. Version sections are added at release time.
 
 ## [Unreleased]
 
+### Added — 2026-11-22 (task 1.5)
+
+- Right properties panel is now collapsible through `Panel::show_collapsible`,
+  with a "Hide" control and drag-to-collapse/reopen behavior.
+- Panel body uses a "Selection" collapsing section; the real empty state
+  ("No selection") is shown until Stage 3 binds element properties.
+- Fixed 200–400px resize range and persisted egui panel width are retained.
+
 ### Added — 2026-11-22 (task 1.4)
 
 - Menu bar rebuilt around working actions only: File → Quit, View → Dark mode,

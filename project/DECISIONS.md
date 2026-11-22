@@ -282,3 +282,23 @@ toggle appears in View and the toolbar.
 **Consequences.** Menus grow stage by stage instead of showing disabled or fake
 commands. Empty menus are not allowed; when an action becomes available, add it
 to the relevant menu, wire it to the shared helper and test it.
+
+---
+
+## D-015 — Properties panel shell uses egui collapsible panels (2026-11-22)
+
+**Context.** Task 1.5 requires a collapsible, resizable properties panel with
+section headers and a real empty state, while keeping the fixed width range and
+in-session persistence from D-013.
+
+**Decision.** Use `egui::Panel::show_collapsible` with a `properties_open` flag
+and a "Hide" control in the panel header. The body uses a `CollapsingHeader`
+("Selection") containing the "No selection" empty state; property sections will
+be bound in Stage 3. Collapse state is in-session only, while the expanded
+width continues to persist through egui memory. The fixed 200–400px range and
+compile-time layout budget remain unchanged.
+
+**Consequences.** The panel can be hidden without losing its saved width, and
+the collapsed/expanded paths both render at the minimum window size. No dead
+placeholder sections are shown; future property editors attach to the existing
+section header.
