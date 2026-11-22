@@ -649,3 +649,21 @@ lives in app settings, and toggles from View → Clean rendering.
 reuse the same function, and users can switch to clean geometry without changing
 the document. Rough paths add only O(points) work per element; a headless
 500-element render stays under the two-second test budget.
+
+---
+
+## D-036 — Properties derive from the live selection and show mixed values (2026-11-23)
+
+**Context.** Task 3.14 binds position, size, angle and style to the selection
+without introducing Stage 4's command/history layer.
+
+**Decision.** Each frame the panel recomputes uniform values across selected
+elements. Disagreeing numeric fields display `Mixed` through a DragValue
+formatter and still accept a new value. Position edits apply a delta so relative
+layout survives; size edits scale each selected element around its own origin;
+angle edits set closed-shape rotation and adjust linear direction. Style edits
+write one resolved style to every selected element.
+
+**Consequences.** Panel state always follows the current selection and edits
+update the canvas immediately. Undo will wrap these mutations when Stage 4
+lands; until then each edit is a direct document change.

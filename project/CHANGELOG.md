@@ -4,6 +4,11 @@ Notable changes, newest first. Version sections are added at release time.
 
 ## [Unreleased]
 
+### Added — 2026-11-23 (task 3.14)
+
+- Live properties binding for position, size, angle and style, with mixed-value
+  display for multi-selection.
+
 ### Added — 2026-11-23 (task 3.13)
 
 - Deterministic seeded hand-drawn stroke rendering with a persisted clean

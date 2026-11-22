@@ -69,6 +69,15 @@ const ROTATION_HANDLE_RADIUS_PIXELS: f32 = 5.0;
 /// Screen-space jitter amplitude for hand-drawn strokes.
 const ROUGH_AMPLITUDE_PIXELS: f64 = 0.8;
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct SelectionProperties {
+    x: Option<f64>,
+    y: Option<f64>,
+    width: Option<f64>,
+    height: Option<f64>,
+    angle_degrees: Option<f64>,
+}
+
 /// High-level pointer interaction mode for the canvas.
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum PointerMode {
@@ -406,6 +415,59 @@ fn rotation_handle_position(bounds: egui::Rect) -> egui::Pos2 {
 
 fn document_color(color: DocumentColor) -> egui::Color32 {
     egui::Color32::from_rgba_unmultiplied(color.r, color.g, color.b, color.a)
+}
+
+fn uniform_value(values: impl IntoIterator<Item = f64>) -> Option<f64> {
+    let mut values = values.into_iter();
+    let first = values.next()?;
+    values
+        .all(|value| (value - first).abs() <= 1e-6)
+        .then_some(first)
+}
+
+/// Renders a numeric field, showing `Mixed` when a selection disagrees.
+fn scalar_field(
+    ui: &mut egui::Ui,
+    label: &str,
+    value: f64,
+    mixed: bool,
+    speed: f64,
+    range: std::ops::RangeInclusive<f64>,
+    suffix: &str,
+) -> Option<f64> {
+    let mut current = value;
+    ui.label(label);
+    let response = ui.add(
+        egui::DragValue::new(&mut current)
+            .speed(speed)
+            .range(range)
+            .suffix(suffix)
+            .custom_formatter(move |number, _| {
+                if mixed {
+                    "Mixed".to_owned()
+                } else {
+                    format!("{number:.1}")
+                }
+            }),
+    );
+    response.changed().then_some(current)
+}
+
+fn normalized_angle(angle: f64) -> f64 {
+    let tau = std::f64::consts::TAU;
+    (angle + std::f64::consts::PI).rem_euclid(tau) - std::f64::consts::PI
+}
+
+/// Angle shown in properties. Linear elements derive their direction from
+/// their endpoints so property edits stay stable after handle rotation.
+fn element_property_angle(element: &Element) -> f64 {
+    if matches!(element.kind, ElementKind::Line | ElementKind::Arrow) && element.points.len() == 2 {
+        let start = element.points[0];
+        let end = element.points[1];
+        normalized_angle((end.y - start.y).atan2(end.x - start.x) + element.angle)
+    } else {
+        normalized_angle(element.angle)
+    }
 }
 
 fn document_color_with_opacity(color: DocumentColor, opacity: f64) -> egui::Color32 {
@@ -857,8 +919,32 @@ impl EpsilonApp {
         }
     }
 
-    /// Style controls applied to every selected element.
-    fn style_controls(ui: &mut egui::Ui, document: &mut Document, selected: &HashSet<ElementId>) {
+    fn selection_properties(
+        document: &Document,
+        selected: &HashSet<ElementId>,
+    ) -> Option<SelectionProperties> {
+        let elements: Vec<&Element> = document
+            .elements
+            .iter()
+            .filter(|element| selected.contains(&element.id))
+            .collect();
+        if elements.is_empty() {
+            return None;
+        }
+        Some(SelectionProperties {
+            x: uniform_value(elements.iter().map(|element| element.x)),
+            y: uniform_value(elements.iter().map(|element| element.y)),
+            width: uniform_value(elements.iter().map(|element| element.width)),
+            height: uniform_value(elements.iter().map(|element| element.height)),
+            angle_degrees: uniform_value(
+                elements
+                    .iter()
+                    .map(|element| element_property_angle(element).to_degrees()),
+            ),
+        })
+    }
+
+    fn set_selection_x(document: &mut Document, selected: &HashSet<ElementId>, value: f64) {
         let Some(first) = document
             .elements
             .iter()
@@ -866,8 +952,193 @@ impl EpsilonApp {
         else {
             return;
         };
-        let mut style = first.style;
+        let delta = Point::new(value - first.x, 0.0);
+        for element in document
+            .elements
+            .iter_mut()
+            .filter(|element| selected.contains(&element.id))
+        {
+            *element = element.translated(delta);
+        }
+    }
+
+    fn set_selection_y(document: &mut Document, selected: &HashSet<ElementId>, value: f64) {
+        let Some(first) = document
+            .elements
+            .iter()
+            .find(|element| selected.contains(&element.id))
+        else {
+            return;
+        };
+        let delta = Point::new(0.0, value - first.y);
+        for element in document
+            .elements
+            .iter_mut()
+            .filter(|element| selected.contains(&element.id))
+        {
+            *element = element.translated(delta);
+        }
+    }
+
+    fn set_selection_width(document: &mut Document, selected: &HashSet<ElementId>, value: f64) {
+        for element in document
+            .elements
+            .iter_mut()
+            .filter(|element| selected.contains(&element.id))
+        {
+            let from = element.bounds();
+            let to = Rect::from_xywh(from.min.x, from.min.y, value.max(1.0), from.height());
+            *element = element.scaled_from(from, to);
+        }
+    }
+
+    fn set_selection_height(document: &mut Document, selected: &HashSet<ElementId>, value: f64) {
+        for element in document
+            .elements
+            .iter_mut()
+            .filter(|element| selected.contains(&element.id))
+        {
+            let from = element.bounds();
+            let to = Rect::from_xywh(from.min.x, from.min.y, from.width(), value.max(1.0));
+            *element = element.scaled_from(from, to);
+        }
+    }
+
+    fn set_selection_angle(document: &mut Document, selected: &HashSet<ElementId>, degrees: f64) {
+        let target = degrees.to_radians();
+        for element in document
+            .elements
+            .iter_mut()
+            .filter(|element| selected.contains(&element.id))
+        {
+            if matches!(element.kind, ElementKind::Line | ElementKind::Arrow)
+                && element.points.len() == 2
+            {
+                element.angle += target - element_property_angle(element);
+            } else {
+                element.angle = target;
+            }
+        }
+    }
+
+    fn transform_controls(
+        ui: &mut egui::Ui,
+        document: &mut Document,
+        selected: &HashSet<ElementId>,
+    ) {
+        let Some(properties) = Self::selection_properties(document, selected) else {
+            return;
+        };
+        let first = document
+            .elements
+            .iter()
+            .find(|element| selected.contains(&element.id));
+        let (first_x, first_y, first_width, first_height, first_angle) =
+            first.map_or((0.0, 0.0, 1.0, 1.0, 0.0), |element| {
+                (
+                    element.x,
+                    element.y,
+                    element.width,
+                    element.height,
+                    element_property_angle(element).to_degrees(),
+                )
+            });
+
+        ui.label(RichText::new("Transform").strong());
+        ui.horizontal(|ui| {
+            if let Some(value) = scalar_field(
+                ui,
+                "X",
+                properties.x.unwrap_or(first_x),
+                properties.x.is_none(),
+                1.0,
+                -1_000_000.0..=1_000_000.0,
+                "",
+            ) {
+                Self::set_selection_x(document, selected, value);
+            }
+            if let Some(value) = scalar_field(
+                ui,
+                "Y",
+                properties.y.unwrap_or(first_y),
+                properties.y.is_none(),
+                1.0,
+                -1_000_000.0..=1_000_000.0,
+                "",
+            ) {
+                Self::set_selection_y(document, selected, value);
+            }
+        });
+        ui.horizontal(|ui| {
+            if let Some(value) = scalar_field(
+                ui,
+                "W",
+                properties.width.unwrap_or(first_width),
+                properties.width.is_none(),
+                1.0,
+                1.0..=1_000_000.0,
+                "",
+            ) {
+                Self::set_selection_width(document, selected, value);
+            }
+            if let Some(value) = scalar_field(
+                ui,
+                "H",
+                properties.height.unwrap_or(first_height),
+                properties.height.is_none(),
+                1.0,
+                1.0..=1_000_000.0,
+                "",
+            ) {
+                Self::set_selection_height(document, selected, value);
+            }
+        });
+        ui.horizontal(|ui| {
+            if let Some(value) = scalar_field(
+                ui,
+                "Angle",
+                properties.angle_degrees.unwrap_or(first_angle),
+                properties.angle_degrees.is_none(),
+                1.0,
+                -360.0..=360.0,
+                "°",
+            ) {
+                Self::set_selection_angle(document, selected, value);
+            }
+        });
+        ui.add_space(4.0);
+    }
+
+    /// Style controls applied to every selected element.
+    fn style_controls(ui: &mut egui::Ui, document: &mut Document, selected: &HashSet<ElementId>) {
+        let styles: Vec<epsilon_core::document::ElementStyle> = document
+            .elements
+            .iter()
+            .filter(|element| selected.contains(&element.id))
+            .map(|element| element.style)
+            .collect();
+        let Some(&first_style) = styles.first() else {
+            return;
+        };
+        let mut style = first_style;
         let mut changed = false;
+        let mixed_stroke = styles.iter().any(|value| value.stroke != style.stroke);
+        let mixed_fill = styles.iter().any(|value| value.fill != style.fill);
+        let mixed_width = styles
+            .iter()
+            .any(|value| (value.stroke_width - style.stroke_width).abs() > 1e-6);
+        let mixed_opacity = styles
+            .iter()
+            .any(|value| (value.opacity - style.opacity).abs() > 1e-6);
+        let mixed_stroke_style = styles
+            .iter()
+            .any(|value| value.stroke_style != style.stroke_style);
+        let mixed_fill_style = styles
+            .iter()
+            .any(|value| value.fill_style != style.fill_style);
+        let mixed_roundness = styles
+            .iter()
+            .any(|value| (value.roundness - style.roundness).abs() > 1e-6);
 
         ui.horizontal(|ui| {
             let mut stroke = document_color(style.stroke);
@@ -876,6 +1147,9 @@ impl EpsilonApp {
                 changed = true;
             }
             ui.label("Stroke");
+            if mixed_stroke {
+                ui.label(RichText::new("Mixed").weak());
+            }
         });
         ui.horizontal(|ui| {
             let mut fill = document_color(style.fill);
@@ -884,33 +1158,46 @@ impl EpsilonApp {
                 changed = true;
             }
             ui.label("Fill");
+            if mixed_fill {
+                ui.label(RichText::new("Mixed").weak());
+            }
         });
         ui.horizontal(|ui| {
-            ui.label("Width");
-            if ui
-                .add(
-                    egui::DragValue::new(&mut style.stroke_width)
-                        .range(0.1..=30.0)
-                        .speed(0.1),
-                )
-                .changed()
-            {
+            if let Some(value) = scalar_field(
+                ui,
+                "Width",
+                style.stroke_width,
+                mixed_width,
+                0.1,
+                0.1..=30.0,
+                "",
+            ) {
+                style.stroke_width = value;
                 changed = true;
             }
         });
         ui.horizontal(|ui| {
-            ui.label("Opacity");
-            if ui
-                .add(egui::Slider::new(&mut style.opacity, 0.0..=1.0).show_value(false))
-                .changed()
-            {
+            if let Some(value) = scalar_field(
+                ui,
+                "Opacity",
+                style.opacity,
+                mixed_opacity,
+                0.01,
+                0.0..=1.0,
+                "",
+            ) {
+                style.opacity = value;
                 changed = true;
             }
         });
         ui.horizontal(|ui| {
             ui.label("Stroke");
             egui::ComboBox::from_id_salt("stroke_style")
-                .selected_text(format!("{:?}", style.stroke_style))
+                .selected_text(if mixed_stroke_style {
+                    "Mixed".to_owned()
+                } else {
+                    format!("{:?}", style.stroke_style)
+                })
                 .show_ui(ui, |ui| {
                     for option in [StrokeStyle::Solid, StrokeStyle::Dashed, StrokeStyle::Dotted] {
                         if ui
@@ -929,7 +1216,11 @@ impl EpsilonApp {
         ui.horizontal(|ui| {
             ui.label("Fill");
             egui::ComboBox::from_id_salt("fill_style")
-                .selected_text(format!("{:?}", style.fill_style))
+                .selected_text(if mixed_fill_style {
+                    "Mixed".to_owned()
+                } else {
+                    format!("{:?}", style.fill_style)
+                })
                 .show_ui(ui, |ui| {
                     for option in [FillStyle::Solid, FillStyle::Hatch, FillStyle::CrossHatch] {
                         if ui
@@ -942,15 +1233,16 @@ impl EpsilonApp {
                 });
         });
         ui.horizontal(|ui| {
-            ui.label("Roundness");
-            if ui
-                .add(
-                    egui::DragValue::new(&mut style.roundness)
-                        .range(0.0..=64.0)
-                        .speed(0.5),
-                )
-                .changed()
-            {
+            if let Some(value) = scalar_field(
+                ui,
+                "Roundness",
+                style.roundness,
+                mixed_roundness,
+                0.5,
+                0.0..=64.0,
+                "",
+            ) {
+                style.roundness = value;
                 changed = true;
             }
         });
@@ -1014,6 +1306,7 @@ impl EpsilonApp {
                         } else {
                             ui.label(format!("{} selected", self.selected.len()));
                             ui.add_space(4.0);
+                            Self::transform_controls(ui, &mut self.document, &self.selected);
                             Self::style_controls(ui, &mut self.document, &self.selected);
                         }
                     });
@@ -2545,6 +2838,59 @@ mod tests {
 
         run_app_frame(&mut app, &ctx, screen, Vec::new());
         assert_eq!(app.document.elements.len(), 3);
+    }
+
+    #[test]
+    fn selection_properties_report_mixed_values_and_edit_live() {
+        let mut app = EpsilonApp::default();
+        let first = app
+            .document
+            .add(Element::new(ElementKind::Rectangle, 0.0, 10.0, 100.0, 40.0));
+        let second = app.document.add(Element::new(
+            ElementKind::Rectangle,
+            100.0,
+            10.0,
+            100.0,
+            40.0,
+        ));
+        app.selected.extend([first, second]);
+
+        let properties =
+            EpsilonApp::selection_properties(&app.document, &app.selected).expect("properties");
+        assert_eq!(properties.x, None);
+        assert_eq!(properties.y, Some(10.0));
+        assert_eq!(properties.width, Some(100.0));
+        assert_eq!(properties.height, Some(40.0));
+        assert_eq!(properties.angle_degrees, Some(0.0));
+
+        EpsilonApp::set_selection_x(&mut app.document, &app.selected, 0.0);
+        EpsilonApp::set_selection_width(&mut app.document, &app.selected, 200.0);
+        EpsilonApp::set_selection_angle(&mut app.document, &app.selected, 30.0);
+
+        let first_element = app.document.element(first).expect("first");
+        let second_element = app.document.element(second).expect("second");
+        assert_eq!(first_element.x, 0.0);
+        assert_eq!(second_element.x, 100.0);
+        assert_eq!(first_element.width, 200.0);
+        assert_eq!(second_element.width, 200.0);
+        assert!((first_element.angle.to_degrees() - 30.0).abs() < 1e-9);
+        assert!((second_element.angle.to_degrees() - 30.0).abs() < 1e-9);
+        app.document
+            .elements
+            .iter_mut()
+            .find(|element| element.id == first)
+            .expect("first")
+            .style
+            .stroke_width = 5.0;
+
+        let ctx = egui::Context::default();
+        theme::apply(&ctx, Theme::Dark);
+        run_app_frame(
+            &mut app,
+            &ctx,
+            egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1000.0, 700.0)),
+            Vec::new(),
+        );
     }
 
     #[test]

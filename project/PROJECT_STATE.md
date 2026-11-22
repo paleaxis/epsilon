@@ -2,8 +2,8 @@
 
 Last updated: 2026-11-23
 Current stage: **Stage 3 — Drawing engine**
-Last completed task: **3.13 — Hand-drawn rendering**
-Next task: **3.14 — Properties panel binding**
+Last completed task: **3.14 — Properties panel binding** (Stage 3 complete)
+Next task: **4.1 — Command/history system (core)**
 
 ## Status
 
@@ -41,7 +41,7 @@ Working UI actions:
 | Help menu | About Epsilon (dialog) |
 | Top toolbar | Wordmark, document title, theme checkbox, About button, version |
 | Canvas | Shape tools draw; Select picks/toggles/marquees, moves, resizes and rotates; text overlays edit in place; middle/space/hand drag pans; wheel zooms |
-| Properties | Style editor for the selection; show-grid toggle and panel hide control |
+| Properties | Live transform/style editor with mixed values; panel hide control |
 
 Only working actions are listed; the Edit menu is intentionally absent until
 undo/clipboard stage 4 exists. Menus and toolbar share the same action helpers
@@ -70,20 +70,20 @@ Other shell behavior:
   `Context::egui_wants_keyboard_input()`; `cc.storage` is a field.
 - Remote: `origin git@github.com/paleaxis/epsilon.git`, branch `main`.
 
-## Verified commands and results (task 3.13)
+## Verified commands and results (task 3.14)
 
 | Command | Result |
 | --- | --- |
 | `cargo fmt --all -- --check` | exit 0 |
 | `cargo clippy --workspace --all-targets -- -D warnings` | exit 0 |
-| `cargo test --workspace` | **113 passed, 0 failed** (55 app, 58 core) |
+| `cargo test --workspace` | **114 passed, 0 failed** (56 app, 58 core) |
 | `cargo build --workspace` | success, no warnings |
 | `timeout 8 ./target/debug/epsilon` | exit 124 (alive, no stderr) |
 
-Task 3.13 tests cover deterministic seeded rough points, clean-rendering
-persistence, styled rendering and a 500-element rough headless frame. The suite
-also retains shell, persistence, viewport, grid, document and earlier shape
-coverage.
+Task 3.14 tests cover mixed-value property reporting, live position/size/angle
+edits, selection-wide style application and a headless panel frame. The suite
+also retains shell, persistence, viewport, grid, document, styling, rough
+rendering and earlier shape coverage.
 
 Native launch was verified by process liveness. Menu clicks and keyboard
 navigation were not automated or visually reviewed; only the action functions
@@ -119,6 +119,8 @@ behind them are tested.
   rectangle roundness, with selection-wide properties controls.
 - Deterministic seeded hand-drawn strokes with a persisted clean-rendering
   toggle.
+- Live transform and style binding in the properties panel, including mixed
+  values for multi-selection.
 - Persisted theme/tool; eframe-persisted window geometry and panel widths.
 - Tool palette with shortcuts, painted icons and accessible names.
 - Dark/light themes with central palette and contrast tests.
@@ -152,7 +154,7 @@ automation allowed). Items requiring a human reviewer:
 - Edit menu and formatting actions are not implemented (Stage 4); File has only
   Quit until document I/O (Stage 5).
 - Shell polish and manual verification pass remains (1.9).
-- Full position/size/angle property binding remains pending (Stage 3.14).
+- Undo/redo and command history remain pending (Stage 4).
 - No CI; local verification only. No visual/screenshot review performed.
 - Window/panel restore relies on eframe/egui and was not re-measured under niri.
 - Project license: GPL-3.0 (`LICENSE`); manifests declare `GPL-3.0-only`.
@@ -161,7 +163,7 @@ automation allowed). Items requiring a human reviewer:
 
 1. Read `AGENTS.md`, `project/ROADMAP.md`, this file, `project/DECISIONS.md`.
 2. `git status` must be clean; run `cargo test --workspace` for the baseline.
-3. Implement only task **3.14** (properties panel binding).
+3. Stop before Stage 4 until the owner requests it.
 4. Verify format, clippy, tests, build, and `timeout 8 ./target/debug/epsilon`.
 5. Update this file, `ROADMAP.md`, `CHANGELOG.md`, then commit and push.
 

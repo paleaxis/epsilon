@@ -414,13 +414,21 @@ the rough path while fill geometry stays exact. Point comparison tests cover
 seed determinism, and a headless 500-element rough render completes well inside
 the test budget.
 
-### [ ] 3.14 — Properties panel binding
+### [x] 3.14 — Properties panel binding
 
 Right panel edits selected element properties (position, size, angle, style),
 shows mixed values for multi-selection, commits on change.
 
 Acceptance: edits are undoable once Stage 4 lands and update canvas live; panel
 state consistent after selection changes.
+
+Completed 2026-11-23: the properties panel binds X/Y/W/H/angle and every style
+field to the live selection. Multi-selection shows "Mixed" for disagreeing
+values; position edits preserve relative offsets, size edits scale each selected
+element, and angle edits update closed shapes and linear directions. Edits are
+computed from the current selection every frame, so panel state follows
+selection changes immediately. Undo integration is deferred to Stage 4's
+command history as specified.
 
 ---
 
