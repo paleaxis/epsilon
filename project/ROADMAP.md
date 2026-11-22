@@ -94,12 +94,16 @@ Completed 2026-11-22: properties panel uses `Panel::show_collapsible` with a
 range retained; empty state shown when there is no selection; collapsed/expanded
 paths render at the 720×480 minimum without panicking.
 
-### [ ] 1.6 — Status bar
+### [x] 1.6 — Status bar
 
 Show active tool, placeholder-free readouts for pointer position and zoom
 (`—` until the canvas exists), and app version.
 
 Acceptance: active tool updates with selection; no crashes when resizing.
+
+Completed 2026-11-22: status bar now shows the active tool name, `Pointer: —`,
+`Zoom: —` and the app version. It follows the active tool because it reads
+`EpsilonApp::tool` during layout; native launch and resize checks pass.
 
 ### [ ] 1.7 — Shortcut registry and help overlay
 

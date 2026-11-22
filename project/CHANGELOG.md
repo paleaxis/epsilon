@@ -4,6 +4,11 @@ Notable changes, newest first. Version sections are added at release time.
 
 ## [Unreleased]
 
+### Added — 2026-11-22 (task 1.6)
+
+- Status bar now reports the active tool plus `Pointer: —` and `Zoom: —`
+  placeholders (replacing the generic "Ready" label) and the app version.
+
 ### Added — 2026-11-22 (task 1.5)
 
 - Right properties panel is now collapsible through `Panel::show_collapsible`,

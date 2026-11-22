@@ -232,7 +232,11 @@ impl EpsilonApp {
             .exact_size(layout::STATUS_BAR_HEIGHT)
             .show(ui, |ui| {
                 ui.horizontal_centered(|ui| {
-                    ui.label(RichText::new("Ready").weak());
+                    ui.label(RichText::new(format!("Tool: {}", self.tool.name())).weak());
+                    ui.add_space(12.0);
+                    ui.label(RichText::new("Pointer: —").weak());
+                    ui.add_space(12.0);
+                    ui.label(RichText::new("Zoom: —").weak());
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         ui.label(
                             RichText::new(concat!("Epsilon ", env!("CARGO_PKG_VERSION"))).weak(),
