@@ -11,6 +11,10 @@ use serde::{Deserialize, Serialize};
 use crate::geometry::{Point, Rect};
 use crate::grid;
 
+fn default_font_size() -> f64 {
+    20.0
+}
+
 /// Current serialized document schema version.
 pub const SCHEMA_VERSION: u32 = 1;
 
@@ -57,6 +61,16 @@ pub enum ElementKind {
     Arrow,
     Freehand,
     Text,
+}
+
+/// Horizontal alignment for text elements.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TextAlign {
+    #[default]
+    Left,
+    Center,
+    Right,
 }
 
 /// RGBA color stored without depending on a UI toolkit's color type.
@@ -132,6 +146,13 @@ pub struct Element {
     pub height: f64,
     pub angle: f64,
     pub style: ElementStyle,
+    /// Content for text elements; empty for every other kind.
+    #[serde(default)]
+    pub text: String,
+    #[serde(default = "default_font_size")]
+    pub font_size: f64,
+    #[serde(default)]
+    pub text_align: TextAlign,
     /// World-space vertices for linear elements (`Line`, `Arrow`, `Freehand`).
     /// Closed shapes leave this empty; `x`/`y`/`width`/`height` are the
     /// derived bounds.
@@ -169,6 +190,9 @@ impl Element {
             height,
             angle: 0.0,
             style: ElementStyle::default(),
+            text: String::new(),
+            font_size: default_font_size(),
+            text_align: TextAlign::Left,
             points: Vec::new(),
             z_order: 0,
             seed: id.get(),
@@ -185,6 +209,14 @@ impl Element {
     /// Creates an arrow with world-space endpoints and derived bounds.
     pub fn arrow(start: Point, end: Point) -> Self {
         Self::linear(ElementKind::Arrow, start, end)
+    }
+
+    /// Creates an empty text element with a wrapping width and font size.
+    pub fn text(x: f64, y: f64, width: f64, font_size: f64) -> Self {
+        let font_size = font_size.max(1.0);
+        let mut element = Self::new(ElementKind::Text, x, y, width.max(1.0), font_size * 1.25);
+        element.font_size = font_size;
+        element
     }
 
     /// Creates a freehand polyline from world-space points, or `None` when
@@ -311,6 +343,9 @@ mod tests {
         );
         second.z_order = 2;
         second.style.opacity = 0.75;
+        second.text = "Hello\nworld".to_owned();
+        second.font_size = 24.0;
+        second.text_align = TextAlign::Center;
         document.elements.push(second);
 
         let mut third = Element::line(Point::new(-5.0, 6.0), Point::new(7.0, -8.0));
@@ -407,6 +442,19 @@ mod tests {
         assert_eq!(element.y, -1.0);
         assert_eq!(element.width, 8.0);
         assert_eq!(element.height, 9.0);
+    }
+
+    #[test]
+    fn text_element_sets_content_defaults() {
+        let element = Element::text(10.0, 20.0, 160.0, 18.0);
+        assert_eq!(element.kind, ElementKind::Text);
+        assert_eq!(element.x, 10.0);
+        assert_eq!(element.y, 20.0);
+        assert_eq!(element.width, 160.0);
+        assert_eq!(element.height, 22.5);
+        assert_eq!(element.font_size, 18.0);
+        assert_eq!(element.text_align, TextAlign::Left);
+        assert!(element.text.is_empty());
     }
 
     #[test]

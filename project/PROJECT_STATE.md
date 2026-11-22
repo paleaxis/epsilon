@@ -2,8 +2,8 @@
 
 Last updated: 2026-11-23
 Current stage: **Stage 3 — Drawing engine**
-Last completed task: **3.7 — Freehand tool**
-Next task: **3.8 — Text tool**
+Last completed task: **3.8 — Text tool**
+Next task: **3.9 — Selection and hit testing**
 
 ## Status
 
@@ -11,7 +11,8 @@ The shell has working File/View/Help menus and a toolbar with app identity,
 theme toggle and About. Theme/tool settings and window/panel state persist from
 task 1.8 (completed early). The canvas pans, zooms, shows an adaptive grid, and
 the Rectangle, Ellipse, Diamond, Line, Arrow and Freehand tools create
-persistent in-memory shapes with live previews.
+persistent in-memory shapes with live previews, and the Text tool places and
+edits multiline text in the canvas.
 
 Repository layout:
 
@@ -22,7 +23,7 @@ README.md                   build/run overview
 project/                    STATE, ROADMAP, DECISIONS, CHANGELOG
 crates/epsilon-core/        UI-independent engine (no egui dependency)
   src/geometry.rs           Point, Rect, shapes, simplify, angle snap + 18 tests
-  src/document.rs           schema-versioned document, elements, lines, paint order
+  src/document.rs           schema-versioned document, shapes, text, paint order
 crates/epsilon-app/         eframe desktop shell
   src/main.rs               native entry point (persist_window enabled)
   src/layout.rs             shell size budgets + compile-time assertions
@@ -39,7 +40,7 @@ Working UI actions:
 | View menu | "Dark mode" checkbox, applied immediately |
 | Help menu | About Epsilon (dialog) |
 | Top toolbar | Wordmark, document title, theme checkbox, About button, version |
-| Canvas | Rectangle/Ellipse/Diamond/Line/Arrow/Freehand drag creates shapes; middle/space/hand drag pans; wheel zooms |
+| Canvas | Rectangle/Ellipse/Diamond/Line/Arrow/Freehand/Text drag creates shapes; text overlays edit in place; middle/space/hand drag pans; wheel zooms |
 | Properties | Show-grid toggle and panel hide control |
 
 Only working actions are listed; the Edit menu is intentionally absent until
@@ -69,18 +70,18 @@ Other shell behavior:
   `Context::egui_wants_keyboard_input()`; `cc.storage` is a field.
 - Remote: `origin git@github.com/paleaxis/epsilon.git`, branch `main`.
 
-## Verified commands and results (task 3.7)
+## Verified commands and results (task 3.8)
 
 | Command | Result |
 | --- | --- |
 | `cargo fmt --all -- --check` | exit 0 |
 | `cargo clippy --workspace --all-targets -- -D warnings` | exit 0 |
-| `cargo test --workspace` | **84 passed, 0 failed** (41 app, 43 core) |
+| `cargo test --workspace` | **89 passed, 0 failed** (45 app, 44 core) |
 | `cargo build --workspace` | success, no warnings |
 | `timeout 8 ./target/debug/epsilon` | exit 124 (alive, no stderr) |
 
-Task 3.7 tests cover point-to-segment distance, smoothing, simplification and
-the freehand press/move/release commit path. The suite also retains shell,
+Task 3.8 tests cover text placement, drag-set wrap width, empty discard,
+measured content commit and Escape commit. The suite also retains shell,
 persistence, viewport, grid, document and earlier shape coverage.
 
 Native launch was verified by process liveness. Menu clicks and keyboard
@@ -103,10 +104,10 @@ behind them are tested.
 - Core document schema with canvas settings, element base fields, stable IDs
   and documented paint-order semantics.
 - App-held document rendering with paint order and screen-space projection.
-- Rectangle, ellipse, diamond, line, arrow and freehand tools with live preview,
-  minimum-size discard and world-space geometry. Linear tools store endpoints
-  and support Shift-constrained 15-degree angles; freehand strokes are smoothed
-  and simplified.
+- Rectangle, ellipse, diamond, line, arrow, freehand and text tools with live
+  previews and world-space geometry. Linear tools store endpoints and support
+  Shift-constrained 15-degree angles; freehand strokes are smoothed and
+  simplified; text supports wrapping, alignment and in-place editing.
 - Persisted theme/tool; eframe-persisted window geometry and panel widths.
 - Tool palette with shortcuts, painted icons and accessible names.
 - Dark/light themes with central palette and contrast tests.
@@ -140,8 +141,8 @@ automation allowed). Items requiring a human reviewer:
 - Edit menu and formatting actions are not implemented (Stage 4); File has only
   Quit until document I/O (Stage 5).
 - Shell polish and manual verification pass remains (1.9).
-- Text editing, selection/editing, styling and properties binding are still
-  pending (Stage 3.8+).
+- Selection/editing, styling and properties binding are still pending
+  (Stage 3.9+).
 - No CI; local verification only. No visual/screenshot review performed.
 - Window/panel restore relies on eframe/egui and was not re-measured under niri.
 - Project license: GPL-3.0 (`LICENSE`); manifests declare `GPL-3.0-only`.
@@ -150,7 +151,7 @@ automation allowed). Items requiring a human reviewer:
 
 1. Read `AGENTS.md`, `project/ROADMAP.md`, this file, `project/DECISIONS.md`.
 2. `git status` must be clean; run `cargo test --workspace` for the baseline.
-3. Implement only task **3.8** (text tool).
+3. Implement only task **3.9** (selection and hit testing).
 4. Verify format, clippy, tests, build, and `timeout 8 ./target/debug/epsilon`.
 5. Update this file, `ROADMAP.md`, `CHANGELOG.md`, then commit and push.
 

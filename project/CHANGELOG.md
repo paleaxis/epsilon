@@ -4,6 +4,12 @@ Notable changes, newest first. Version sections are added at release time.
 
 ## [Unreleased]
 
+### Added — 2026-11-23 (task 3.8)
+
+- Text tool with click/drag placement, multiline in-canvas editing, wrapped
+  measurement and Esc/click-out commit.
+- Text content, font size and alignment in the document model.
+
 ### Added — 2026-11-23 (task 3.7)
 
 - Freehand tool with world-space sampling, smoothing, simplification and a

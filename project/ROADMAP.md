@@ -323,13 +323,21 @@ Input is distance-filtered and hard-capped at 4096 points. Core tests cover
 segment distance, smoothing and simplification; a frame test covers the full
 press/move/release commit path.
 
-### [ ] 3.8 — Text tool
+### [x] 3.8 — Text tool
 
 Click/drag to place text; multi-line editing overlay; font size, alignment,
 color; empty text is discarded on commit.
 
 Acceptance: text persists, edits commit on Esc/click-out, wrap width respected;
 manual editing check.
+
+Completed 2026-11-23: text elements store content, font size and alignment.
+A click places a default-width text box, a drag sets its wrap width, and a
+foreground multiline TextEdit edits it. Esc/click-out commits, empty text is
+removed, and the stored height is measured from wrapped layout. Rendering uses
+the element color, alignment and wrap width. Headless tests cover placement,
+empty discard, measured commit and Escape; live visual editing was not possible
+in this environment.
 
 ### [ ] 3.9 — Selection and hit testing
 

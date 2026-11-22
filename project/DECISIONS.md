@@ -538,3 +538,22 @@ Ramer–Douglas–Peucker at a 1px screen tolerance.
 **Consequences.** Strokes stay world-stable, rendered and stored polylines are
 smaller, and memory is bounded by construction. Pressure is intentionally not
 part of the model yet, so input devices behave uniformly.
+
+---
+
+## D-030 — Text edits happen in a foreground overlay (2026-11-23)
+
+**Context.** Task 3.8 needs multiline editing over the canvas without turning
+the canvas into a text widget or letting canvas drags fire underneath the
+editor.
+
+**Decision.** A new text element starts empty with a wrap width from the click
+or drag. The app stores the element ID and a text buffer, renders a foreground
+`TextEdit` over the element's screen rect, and blocks canvas input while that
+editor is active. Escape or a click outside the editor commits; empty content
+removes the element. Commit measures the wrapped layout at the current zoom and
+stores its world-space height.
+
+**Consequences.** Editing uses egui's native text behavior and remains visually
+anchored to the element. Text layout is measured in the app boundary while the
+document stays UI-independent, and deleted empty text leaves no placeholder.

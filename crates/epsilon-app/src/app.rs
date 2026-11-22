@@ -1,6 +1,8 @@
 use eframe::egui::{self, Align, Layout, RichText};
 
-use epsilon_core::document::{Color as DocumentColor, Document, Element, ElementKind};
+use epsilon_core::document::{
+    Color as DocumentColor, Document, Element, ElementId, ElementKind, TextAlign,
+};
 use epsilon_core::geometry::{
     Point, Rect, arrowhead_points, constrain_angle, simplify_polyline, smooth_polyline,
 };
@@ -45,6 +47,11 @@ const FREEHAND_SIMPLIFY_PIXELS: f64 = 1.0;
 /// Hard cap that keeps long freehand strokes from growing without bound.
 const MAX_FREEHAND_POINTS: usize = 4096;
 
+/// Defaults for newly placed text.
+const DEFAULT_FONT_SIZE: f64 = 20.0;
+const DEFAULT_TEXT_WIDTH: f64 = 180.0;
+const MIN_TEXT_WIDTH_PIXELS: f64 = 40.0;
+
 /// High-level pointer interaction mode for the canvas.
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum PointerMode {
@@ -73,6 +80,7 @@ fn drawing_kind(tool: Tool) -> Option<ElementKind> {
         Tool::Line => Some(ElementKind::Line),
         Tool::Arrow => Some(ElementKind::Arrow),
         Tool::Freehand => Some(ElementKind::Freehand),
+        Tool::Text => Some(ElementKind::Text),
         _ => None,
     }
 }
@@ -169,6 +177,21 @@ fn document_color(color: DocumentColor) -> egui::Color32 {
     egui::Color32::from_rgba_unmultiplied(color.r, color.g, color.b, color.a)
 }
 
+/// Measures wrapped text in world units for the current zoom.
+fn measured_text_height(
+    ctx: &egui::Context,
+    text: &str,
+    font_size: f64,
+    wrap_width: f64,
+    zoom: f64,
+) -> f64 {
+    let font = egui::FontId::proportional((font_size * zoom).max(1.0) as f32);
+    let wrap = (wrap_width * zoom).max(1.0) as f32;
+    let galley =
+        ctx.fonts_mut(|fonts| fonts.layout(text.to_owned(), font, egui::Color32::WHITE, wrap));
+    ((galley.size().y / zoom as f32) as f64).max(font_size * 1.25)
+}
+
 /// Root application object and native shell.
 ///
 /// This is the Stage 1 shell: regions are laid out and themed, with the tool
@@ -201,6 +224,10 @@ pub struct EpsilonApp {
     hover_screen: Option<egui::Pos2>,
     /// World-space samples for the freehand stroke currently being drawn.
     freehand_points: Vec<Point>,
+    /// Element currently open in the in-canvas text editor.
+    editing_text: Option<ElementId>,
+    text_buffer: String,
+    text_editor_needs_focus: bool,
 }
 
 impl Default for EpsilonApp {
@@ -219,6 +246,9 @@ impl Default for EpsilonApp {
             pointer_mode: PointerMode::Idle,
             hover_screen: None,
             freehand_points: Vec::new(),
+            editing_text: None,
+            text_buffer: String::new(),
+            text_editor_needs_focus: false,
         }
     }
 }
@@ -769,6 +799,22 @@ impl EpsilonApp {
     /// Commits a shape if the drag is large enough on screen.
     fn commit_shape(&mut self, kind: ElementKind, start: Point, end: Point) {
         let rect = Rect::from_corners(start, end);
+        if kind == ElementKind::Text {
+            let dragged_width = rect.width();
+            let width = if dragged_width * self.viewport.zoom < MIN_TEXT_WIDTH_PIXELS {
+                DEFAULT_TEXT_WIDTH
+            } else {
+                dragged_width
+            };
+            let mut element = Element::text(rect.min.x, rect.min.y, width, DEFAULT_FONT_SIZE);
+            element.style.stroke = self.default_stroke();
+            let id = self.document.add(element);
+            self.editing_text = Some(id);
+            self.text_buffer.clear();
+            self.text_editor_needs_focus = true;
+            return;
+        }
+
         let screen_width = rect.width() * self.viewport.zoom;
         let screen_height = rect.height() * self.viewport.zoom;
         let too_small = if matches!(kind, ElementKind::Line | ElementKind::Arrow) {
@@ -793,6 +839,87 @@ impl EpsilonApp {
         match self.theme {
             Theme::Dark => DocumentColor::rgb(235, 235, 235),
             Theme::Light => DocumentColor::BLACK,
+        }
+    }
+
+    /// Draws and commits the in-canvas text editor. Returns `true` while the
+    /// editor should block canvas input for this frame.
+    fn update_text_edit(&mut self, ctx: &egui::Context, canvas_rect: egui::Rect) -> bool {
+        let Some(id) = self.editing_text else {
+            return false;
+        };
+        let Some(element) = self.document.element(id) else {
+            self.editing_text = None;
+            return false;
+        };
+        let editor_rect = element_screen_rect(canvas_rect, &self.viewport, element);
+        let escape = ctx.input(|input| input.key_pressed(egui::Key::Escape));
+        let clicked_out = ctx.input(|input| input.pointer.primary_pressed())
+            && ctx
+                .pointer_hover_pos()
+                .is_some_and(|pos| !editor_rect.expand(8.0).contains(pos));
+        if escape || clicked_out {
+            self.commit_text_edit(ctx);
+            return true;
+        }
+
+        let font_size = (element.font_size * self.viewport.zoom).max(6.0) as f32;
+        let width = (element.width * self.viewport.zoom).max(30.0) as f32;
+        let height = (element.height * self.viewport.zoom).max(font_size as f64 * 1.4) as f32;
+        let text_color = document_color(element.style.stroke);
+        #[allow(deprecated)]
+        let id = egui::Id::new(("text_editor", id.get()));
+        let mut buffer = self.text_buffer.clone();
+        let mut needs_focus = self.text_editor_needs_focus;
+
+        egui::Area::new(id)
+            .fixed_pos(editor_rect.min)
+            .order(egui::Order::Foreground)
+            .show(ctx, |ui| {
+                egui::Frame::popup(ui.style()).show(ui, |ui| {
+                    let response = ui.add_sized(
+                        [width, height],
+                        egui::TextEdit::multiline(&mut buffer)
+                            .font(egui::FontId::proportional(font_size))
+                            .text_color(text_color)
+                            .desired_width(width),
+                    );
+                    if needs_focus {
+                        response.request_focus();
+                        needs_focus = false;
+                    }
+                });
+            });
+
+        self.text_buffer = buffer;
+        self.text_editor_needs_focus = needs_focus;
+        true
+    }
+
+    /// Commits or discards the text element being edited.
+    fn commit_text_edit(&mut self, ctx: &egui::Context) {
+        let Some(id) = self.editing_text.take() else {
+            return;
+        };
+        let text = std::mem::take(&mut self.text_buffer);
+        self.text_editor_needs_focus = false;
+
+        if text.trim().is_empty() {
+            self.document.remove(id);
+            return;
+        }
+
+        let zoom = self.viewport.zoom;
+        if let Some(element) = self
+            .document
+            .elements
+            .iter_mut()
+            .find(|element| element.id == id)
+        {
+            element.height =
+                measured_text_height(ctx, &text, element.font_size, element.width, zoom);
+            element.text = text;
+            element.version = element.version.saturating_add(1);
         }
     }
 
@@ -893,7 +1020,27 @@ impl EpsilonApp {
                         painter.add(egui::Shape::line(points, stroke));
                     }
                 }
-                _ => {}
+                ElementKind::Text => {
+                    if !element.text.is_empty() {
+                        let color = document_color(element.style.stroke);
+                        let font_id = egui::FontId::proportional(
+                            (element.font_size * self.viewport.zoom).max(1.0) as f32,
+                        );
+                        let wrap_width = (element.width * self.viewport.zoom).max(1.0) as f32;
+                        let galley =
+                            painter.layout(element.text.clone(), font_id, color, wrap_width);
+                        let pos = match element.text_align {
+                            TextAlign::Left => rect.min,
+                            TextAlign::Center => {
+                                egui::pos2(rect.center().x - galley.size().x / 2.0, rect.min.y)
+                            }
+                            TextAlign::Right => {
+                                egui::pos2(rect.max.x - galley.size().x, rect.min.y)
+                            }
+                        };
+                        painter.galley(pos, galley, color);
+                    }
+                }
             }
         }
     }
@@ -1094,9 +1241,14 @@ impl EpsilonApp {
                     }
                 });
 
-                self.update_pan(ui.ctx(), rect);
-                self.update_zoom(ui.ctx(), rect);
-                self.update_drawing(ui.ctx(), rect);
+                let editing_text = self.editing_text.is_some();
+                if editing_text {
+                    self.update_text_edit(ui.ctx(), rect);
+                } else {
+                    self.update_pan(ui.ctx(), rect);
+                    self.update_zoom(ui.ctx(), rect);
+                    self.update_drawing(ui.ctx(), rect);
+                }
 
                 if self.grid_enabled {
                     let step =
@@ -1517,6 +1669,96 @@ mod tests {
             drawing_end(ElementKind::Arrow, start, end, true),
             constrained
         );
+    }
+
+    #[test]
+    fn text_click_creates_element_and_opens_editor() {
+        let mut app = EpsilonApp::default();
+        app.commit_shape(
+            ElementKind::Text,
+            Point::new(10.0, 20.0),
+            Point::new(10.0, 20.0),
+        );
+
+        assert_eq!(app.document.elements.len(), 1);
+        let element = &app.document.elements[0];
+        assert_eq!(element.kind, ElementKind::Text);
+        assert_eq!(element.width, DEFAULT_TEXT_WIDTH);
+        assert_eq!(element.font_size, DEFAULT_FONT_SIZE);
+        assert_eq!(app.editing_text, Some(element.id));
+    }
+
+    #[test]
+    fn text_drag_sets_wrap_width_and_empty_text_is_discarded() {
+        let mut app = EpsilonApp::default();
+        app.commit_shape(
+            ElementKind::Text,
+            Point::new(0.0, 0.0),
+            Point::new(120.0, 30.0),
+        );
+        assert_eq!(app.document.elements[0].width, 120.0);
+
+        let ctx = egui::Context::default();
+        app.commit_text_edit(&ctx);
+        assert!(app.document.elements.is_empty());
+        assert!(app.editing_text.is_none());
+    }
+
+    #[test]
+    fn text_edit_commits_content_and_measured_height() {
+        let mut app = EpsilonApp::default();
+        app.commit_shape(ElementKind::Text, Point::ZERO, Point::ZERO);
+        app.text_buffer = "First line\nSecond line wraps".to_owned();
+
+        let ctx = egui::Context::default();
+        let output = ctx.run_ui(Default::default(), |_ui| {});
+        output.drop_without_applying_deltas();
+        app.commit_text_edit(&ctx);
+
+        let element = &app.document.elements[0];
+        assert_eq!(element.text, "First line\nSecond line wraps");
+        assert!(element.height >= element.font_size * 1.25);
+        assert!(app.editing_text.is_none());
+        assert!(app.text_buffer.is_empty());
+    }
+
+    #[test]
+    fn escape_commits_the_text_editor() {
+        let ctx = egui::Context::default();
+        theme::apply(&ctx, Theme::Dark);
+        let mut app = EpsilonApp::default();
+        let id = app.document.add(Element::text(
+            10.0,
+            20.0,
+            DEFAULT_TEXT_WIDTH,
+            DEFAULT_FONT_SIZE,
+        ));
+        app.editing_text = Some(id);
+        app.text_buffer = "Edited text".to_owned();
+
+        let output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1000.0, 700.0),
+                )),
+                events: vec![egui::Event::Key {
+                    key: egui::Key::Escape,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers: egui::Modifiers::NONE,
+                }],
+                ..Default::default()
+            },
+            |ui| {
+                let _ = app.show_shell(ui);
+            },
+        );
+        output.drop_without_applying_deltas();
+
+        assert!(app.editing_text.is_none());
+        assert_eq!(app.document.elements[0].text, "Edited text");
     }
 
     #[test]
