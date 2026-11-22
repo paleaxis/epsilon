@@ -302,3 +302,21 @@ compile-time layout budget remain unchanged.
 the collapsed/expanded paths both render at the minimum window size. No dead
 placeholder sections are shown; future property editors attach to the existing
 section header.
+
+---
+
+## D-016 — Central keyboard shortcut registry (2026-11-22)
+
+**Context.** Task 1.7 requires a central action/shortcut table, a help overlay,
+and detection of duplicate bindings. Tool shortcuts were previously decoded
+ad hoc in `handle_shortcuts`.
+
+**Decision.** `app.rs` owns `Action`, `KeyBinding` and the `KEYBINDINGS` slice.
+`handle_shortcuts` dispatches through that table; `Tool::from_key` is removed in
+favor of `Action::SelectTool` bindings. F1 and `?` toggle the help overlay,
+Escape closes it, and the overlay lists every registered binding. Duplicate
+bindings and tool coverage are tested.
+
+**Consequences.** New shortcuts are added in one place and appear in help
+automatically. Panels and menus can later consume the same table instead of
+reimplementing key checks.

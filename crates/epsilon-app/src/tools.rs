@@ -70,21 +70,6 @@ impl Tool {
         }
     }
 
-    pub fn from_key(key: egui::Key) -> Option<Self> {
-        Some(match key {
-            egui::Key::V => Self::Select,
-            egui::Key::H => Self::Hand,
-            egui::Key::R => Self::Rectangle,
-            egui::Key::O => Self::Ellipse,
-            egui::Key::D => Self::Diamond,
-            egui::Key::L => Self::Line,
-            egui::Key::A => Self::Arrow,
-            egui::Key::P => Self::Freehand,
-            egui::Key::T => Self::Text,
-            _ => return None,
-        })
-    }
-
     pub fn tooltip(self) -> String {
         format!("{} ({})", self.name(), self.shortcut())
     }
@@ -213,25 +198,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn shortcut_mapping_matches_documented_keys() {
-        let expected = [
-            (egui::Key::V, Tool::Select),
-            (egui::Key::H, Tool::Hand),
-            (egui::Key::R, Tool::Rectangle),
-            (egui::Key::O, Tool::Ellipse),
-            (egui::Key::D, Tool::Diamond),
-            (egui::Key::L, Tool::Line),
-            (egui::Key::A, Tool::Arrow),
-            (egui::Key::P, Tool::Freehand),
-            (egui::Key::T, Tool::Text),
-        ];
-
-        for (key, tool) in expected {
-            assert_eq!(Tool::from_key(key), Some(tool), "{}", tool.name());
-        }
-    }
-
-    #[test]
     fn every_tool_has_a_unique_shortcut() {
         let mut shortcuts = std::collections::HashSet::new();
         for tool in Tool::ALL {
@@ -243,17 +209,5 @@ mod tests {
             );
         }
         assert_eq!(shortcuts.len(), Tool::ALL.len());
-    }
-
-    #[test]
-    fn unrelated_keys_select_nothing() {
-        for key in [
-            egui::Key::B,
-            egui::Key::X,
-            egui::Key::Num1,
-            egui::Key::Space,
-        ] {
-            assert_eq!(Tool::from_key(key), None);
-        }
     }
 }

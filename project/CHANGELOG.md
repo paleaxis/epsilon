@@ -4,6 +4,12 @@ Notable changes, newest first. Version sections are added at release time.
 
 ## [Unreleased]
 
+### Added — 2026-11-22 (task 1.7)
+
+- Central `KEYBINDINGS` registry for implemented tool and help shortcuts.
+- Help overlay (F1 or `?`) listing all registered shortcuts; Escape closes it.
+- Tests for duplicate bindings, tool coverage, overlay toggling and closing.
+
 ### Added — 2026-11-22 (task 1.6)
 
 - Status bar now reports the active tool plus `Pointer: —` and `Zoom: —`

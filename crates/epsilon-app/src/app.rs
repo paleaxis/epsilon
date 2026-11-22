@@ -22,9 +22,9 @@ struct PersistedSettings {
 /// Root application object and native shell.
 ///
 /// This is the Stage 1 shell: regions are laid out and themed, with the tool
-/// palette, working menu/toolbar actions and the properties panel shell. Live
-/// status readouts (1.6) and the shortcut help overlay (1.7) are filled in
-/// later.
+/// palette, working menu/toolbar actions, properties panel and status bar. The
+/// shortcut registry and help overlay (1.7) are implemented here; canvas work
+/// remains for Stage 2.
 pub struct EpsilonApp {
     about_open: bool,
     theme: Theme,
@@ -32,6 +32,8 @@ pub struct EpsilonApp {
     /// Whether the right properties panel is expanded. In-session state; the
     /// panel's width still persists through egui memory.
     properties_open: bool,
+    /// Whether the keyboard-shortcut help overlay is open.
+    help_open: bool,
 }
 
 impl Default for EpsilonApp {
@@ -41,9 +43,113 @@ impl Default for EpsilonApp {
             theme: Theme::default(),
             tool: Tool::default(),
             properties_open: true,
+            help_open: false,
         }
     }
 }
+
+/// Actions that can be triggered by a keyboard shortcut.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Action {
+    SelectTool(Tool),
+    ToggleHelp,
+}
+
+/// One entry in the central shortcut registry.
+#[derive(Debug, Clone, Copy)]
+struct KeyBinding {
+    /// Display text for the key (for example `V` or `F1`).
+    shortcut: &'static str,
+    key: egui::Key,
+    modifiers: egui::Modifiers,
+    action: Action,
+    description: &'static str,
+}
+
+/// All keyboard shortcuts implemented by the shell. Panels and menus should
+/// consult this table rather than hard-coding key checks.
+const KEYBINDINGS: &[KeyBinding] = &[
+    KeyBinding {
+        shortcut: "V",
+        key: egui::Key::V,
+        modifiers: egui::Modifiers::NONE,
+        action: Action::SelectTool(Tool::Select),
+        description: "Select tool",
+    },
+    KeyBinding {
+        shortcut: "H",
+        key: egui::Key::H,
+        modifiers: egui::Modifiers::NONE,
+        action: Action::SelectTool(Tool::Hand),
+        description: "Hand (pan) tool",
+    },
+    KeyBinding {
+        shortcut: "R",
+        key: egui::Key::R,
+        modifiers: egui::Modifiers::NONE,
+        action: Action::SelectTool(Tool::Rectangle),
+        description: "Rectangle tool",
+    },
+    KeyBinding {
+        shortcut: "O",
+        key: egui::Key::O,
+        modifiers: egui::Modifiers::NONE,
+        action: Action::SelectTool(Tool::Ellipse),
+        description: "Ellipse tool",
+    },
+    KeyBinding {
+        shortcut: "D",
+        key: egui::Key::D,
+        modifiers: egui::Modifiers::NONE,
+        action: Action::SelectTool(Tool::Diamond),
+        description: "Diamond tool",
+    },
+    KeyBinding {
+        shortcut: "L",
+        key: egui::Key::L,
+        modifiers: egui::Modifiers::NONE,
+        action: Action::SelectTool(Tool::Line),
+        description: "Line tool",
+    },
+    KeyBinding {
+        shortcut: "A",
+        key: egui::Key::A,
+        modifiers: egui::Modifiers::NONE,
+        action: Action::SelectTool(Tool::Arrow),
+        description: "Arrow tool",
+    },
+    KeyBinding {
+        shortcut: "P",
+        key: egui::Key::P,
+        modifiers: egui::Modifiers::NONE,
+        action: Action::SelectTool(Tool::Freehand),
+        description: "Freehand tool",
+    },
+    KeyBinding {
+        shortcut: "T",
+        key: egui::Key::T,
+        modifiers: egui::Modifiers::NONE,
+        action: Action::SelectTool(Tool::Text),
+        description: "Text tool",
+    },
+    KeyBinding {
+        shortcut: "F1",
+        key: egui::Key::F1,
+        modifiers: egui::Modifiers::NONE,
+        action: Action::ToggleHelp,
+        description: "Toggle shortcut help",
+    },
+    KeyBinding {
+        shortcut: "?",
+        key: egui::Key::Questionmark,
+        modifiers: egui::Modifiers {
+            shift: true,
+            ..egui::Modifiers::NONE
+        },
+        action: Action::ToggleHelp,
+        description: "Toggle shortcut help",
+    },
+];
 
 impl EpsilonApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
@@ -160,29 +266,58 @@ impl EpsilonApp {
             });
     }
 
-    /// Applies single-key tool shortcuts, unless a widget currently owns
+    /// Applies registered keyboard shortcuts, unless a widget currently owns
     /// keyboard input (a text field, for example).
     fn handle_shortcuts(&mut self, ctx: &egui::Context) {
         if ctx.egui_wants_keyboard_input() {
             return;
         }
 
-        let shortcut = ctx.input(|input| {
-            input.events.iter().find_map(|event| match event {
-                egui::Event::Key {
-                    key,
-                    pressed: true,
-                    modifiers,
-                    ..
-                } if !modifiers.ctrl && !modifiers.alt && !modifiers.command => {
-                    Tool::from_key(*key)
-                }
-                _ => None,
-            })
-        });
+        let events: Vec<egui::Event> = ctx.input(|input| input.events.clone());
+        for event in events {
+            let egui::Event::Key {
+                key,
+                pressed: true,
+                modifiers,
+                ..
+            } = event
+            else {
+                continue;
+            };
 
-        if let Some(tool) = shortcut {
-            self.tool = tool;
+            // Help overlay toggles and closes are handled even while it is open.
+            if key == egui::Key::F1 || key == egui::Key::Questionmark {
+                let binding = KEYBINDINGS
+                    .iter()
+                    .find(|binding| binding.key == key && binding.modifiers == modifiers);
+                if binding.is_some() {
+                    self.help_open = !self.help_open;
+                }
+                continue;
+            }
+            if key == egui::Key::Escape && self.help_open {
+                self.help_open = false;
+                continue;
+            }
+
+            // Ignore tool and other shortcuts while the help overlay is open.
+            if self.help_open {
+                continue;
+            }
+
+            if modifiers.ctrl || modifiers.alt || modifiers.command {
+                continue;
+            }
+
+            if let Some(binding) = KEYBINDINGS
+                .iter()
+                .find(|binding| binding.key == key && binding.modifiers == modifiers)
+            {
+                match binding.action {
+                    Action::SelectTool(tool) => self.tool = tool,
+                    Action::ToggleHelp => self.help_open = !self.help_open,
+                }
+            }
         }
     }
 
@@ -275,6 +410,26 @@ impl EpsilonApp {
         self.canvas(ui)
     }
 
+    fn help_window(&mut self, ctx: &egui::Context) {
+        egui::Window::new("Keyboard shortcuts")
+            .open(&mut self.help_open)
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .show(ctx, |ui| {
+                egui::Grid::new("epsilon_shortcuts")
+                    .num_columns(2)
+                    .spacing([12.0, 4.0])
+                    .show(ui, |ui| {
+                        for binding in KEYBINDINGS {
+                            ui.label(RichText::new(binding.shortcut).strong());
+                            ui.label(binding.description);
+                            ui.end_row();
+                        }
+                    });
+            });
+    }
+
     fn about_window(&mut self, ctx: &egui::Context) {
         egui::Window::new("About Epsilon")
             .open(&mut self.about_open)
@@ -300,6 +455,7 @@ impl eframe::App for EpsilonApp {
         self.handle_shortcuts(ui.ctx());
         let _canvas_rect = self.show_shell(ui);
         self.about_window(ui.ctx());
+        self.help_window(ui.ctx());
     }
 
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
@@ -545,6 +701,67 @@ mod tests {
         app.toggle_theme(&ctx);
         assert_eq!(app.theme, Theme::Dark);
         assert_eq!(ctx.theme(), egui::Theme::Dark);
+    }
+
+    #[test]
+    fn shortcut_bindings_have_no_duplicates() {
+        let mut seen = std::collections::HashSet::new();
+        for binding in KEYBINDINGS {
+            let signature = format!("{:?}|{:?}", binding.key, binding.modifiers);
+            assert!(
+                seen.insert(signature),
+                "duplicate shortcut binding for {}",
+                binding.shortcut
+            );
+        }
+    }
+
+    #[test]
+    fn shortcut_bindings_cover_all_tools() {
+        for tool in Tool::ALL {
+            assert!(
+                KEYBINDINGS.iter().any(|binding| {
+                    matches!(binding.action, Action::SelectTool(found) if found == tool)
+                }),
+                "{} has no shortcut binding",
+                tool.name()
+            );
+        }
+    }
+
+    #[test]
+    fn help_overlay_toggles_with_f1() {
+        let mut app = EpsilonApp::default();
+        assert!(!app.help_open);
+
+        run_shortcut(&mut app, egui::Key::F1, egui::Modifiers::default());
+        assert!(app.help_open);
+
+        run_shortcut(&mut app, egui::Key::F1, egui::Modifiers::default());
+        assert!(!app.help_open);
+    }
+
+    #[test]
+    fn help_overlay_toggles_with_question_mark() {
+        let mut app = EpsilonApp::default();
+        let modifiers = egui::Modifiers {
+            shift: true,
+            ..Default::default()
+        };
+
+        run_shortcut(&mut app, egui::Key::Questionmark, modifiers);
+        assert!(app.help_open);
+    }
+
+    #[test]
+    fn help_overlay_closes_with_escape() {
+        let mut app = EpsilonApp {
+            help_open: true,
+            ..Default::default()
+        };
+
+        run_shortcut(&mut app, egui::Key::Escape, egui::Modifiers::default());
+        assert!(!app.help_open);
     }
 
     #[test]

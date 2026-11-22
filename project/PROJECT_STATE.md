@@ -2,8 +2,8 @@
 
 Last updated: 2026-11-22
 Current stage: **Stage 1 — Native desktop shell**
-Last completed task: **1.6 — Status bar**
-Next task: **1.7 — Shortcut registry and help overlay**
+Last completed task: **1.7 — Shortcut registry and help overlay**
+Next task: **1.9 — Shell polish and manual verification pass**
 
 ## Status
 
@@ -71,7 +71,7 @@ Other shell behavior:
 | --- | --- |
 | `cargo fmt --all -- --check` | exit 0 |
 | `cargo clippy --workspace --all-targets -- -D warnings` | exit 0 |
-| `cargo test --workspace` | **32 passed, 0 failed** (21 app, 11 core) |
+| `cargo test --workspace` | **35 passed, 0 failed** (24 app, 11 core) |
 | `cargo build --workspace` | success, no warnings |
 | `timeout 8 ./target/debug/epsilon` | exit 124 (alive, no stderr) |
 
@@ -88,6 +88,7 @@ behind them are tested.
 - Working menus (File/Quit, View/theme, Help/About) and toolbar actions.
 - Collapsible/resizable properties panel with section header and empty state.
 - Status bar reports active tool, pointer/zoom placeholders and app version.
+- Central shortcut registry and F1/? help overlay.
 - Persisted theme/tool; eframe-persisted window geometry and panel widths.
 - Tool palette with shortcuts, painted icons and accessible names.
 - Dark/light themes with central palette and contrast tests.
@@ -98,7 +99,7 @@ behind them are tested.
 
 - Edit menu and formatting actions are not implemented (Stage 4); File has only
   Quit until document I/O (Stage 5).
-- Shortcut registry/help overlay absent (1.7).
+- Shell polish and manual verification pass remains (1.9).
 - Canvas and drawing (Stages 2–3) are not implemented.
 - No CI; local verification only. No visual/screenshot review performed.
 - Window/panel restore relies on eframe/egui and was not re-measured under niri.
@@ -108,8 +109,8 @@ behind them are tested.
 
 1. Read `AGENTS.md`, `project/ROADMAP.md`, this file, `project/DECISIONS.md`.
 2. `git status` must be clean; run `cargo test --workspace` for the baseline.
-3. Implement only task **1.7** (shortcut registry and help overlay: central
-   action/shortcut table, F1/? overlay, duplicate-binding test).
+3. Implement only task **1.9** (shell polish and manual verification pass:
+   spacing, typography, min sizes, HiDPI, keyboard focus; record checklist).
 4. Verify format, clippy, tests, build, and `timeout 8 ./target/debug/epsilon`.
 5. Update this file, `ROADMAP.md`, `CHANGELOG.md`, then commit and push.
 

@@ -105,13 +105,18 @@ Completed 2026-11-22: status bar now shows the active tool name, `Pointer: —`,
 `Zoom: —` and the app version. It follows the active tool because it reads
 `EpsilonApp::tool` during layout; native launch and resize checks pass.
 
-### [ ] 1.7 — Shortcut registry and help overlay
+### [x] 1.7 — Shortcut registry and help overlay
 
 Central action/shortcut table used by panels and menus; help overlay (F1/?) lists
 active shortcuts; duplicate bindings are rejected or tested.
 
 Acceptance: unit test detects duplicate bindings; overlay opens/closes via
 keyboard; shortcuts listed match implemented actions.
+
+Completed 2026-11-22: `KEYBINDINGS` is the central registry for tool and help
+shortcuts; `handle_shortcuts` dispatches through it; F1 and `?` toggle the
+help overlay and Escape closes it. Tests cover duplicate bindings, tool
+coverage, F1/`?` toggling and Escape closing.
 
 ### [x] 1.8 — Window/settings persistence
 
