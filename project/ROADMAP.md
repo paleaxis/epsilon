@@ -399,13 +399,20 @@ selection, applying changes to every selected element. Serialization covers the
 new fields with legacy defaults, and headless rendering exercises all style
 paths.
 
-### [ ] 3.13 — Hand-drawn rendering
+### [x] 3.13 — Hand-drawn rendering
 
 Deterministic rough-stroke rendering driven by element seed, with a clean
 (architect-style) toggle.
 
 Acceptance: same seed renders identically across frames/exports (test hashes or
 point comparison); performance within budget on 500 elements.
+
+Completed 2026-11-23: seeded `rough_polyline` jitters vertices and segment
+midpoints deterministically; the View menu's persisted "Clean rendering"
+toggle switches back to exact geometry. Shapes, arrows, lines and freehand use
+the rough path while fill geometry stays exact. Point comparison tests cover
+seed determinism, and a headless 500-element rough render completes well inside
+the test budget.
 
 ### [ ] 3.14 — Properties panel binding
 

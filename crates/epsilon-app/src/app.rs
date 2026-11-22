@@ -8,7 +8,7 @@ use epsilon_core::document::{
 };
 use epsilon_core::geometry::{
     Point, Rect, ResizeHandle, arrowhead_points, constrain_angle, resize_rect, rotate_point,
-    simplify_polyline, smooth_polyline, snap_angle,
+    rough_polyline, simplify_polyline, smooth_polyline, snap_angle,
 };
 use epsilon_core::grid;
 use epsilon_core::viewport::Viewport;
@@ -32,6 +32,8 @@ struct PersistedSettings {
     tool: Tool,
     #[serde(default)]
     grid_enabled: bool,
+    #[serde(default)]
+    clean_rendering: bool,
 }
 
 /// Minimum on-screen width/height (or line length) for a drag to be committed.
@@ -63,6 +65,9 @@ const HANDLE_HIT_RADIUS_PIXELS: f32 = 7.0;
 const MIN_ELEMENT_PIXELS: f64 = 8.0;
 const ROTATION_HANDLE_OFFSET_PIXELS: f32 = 24.0;
 const ROTATION_HANDLE_RADIUS_PIXELS: f32 = 5.0;
+
+/// Screen-space jitter amplitude for hand-drawn strokes.
+const ROUGH_AMPLITUDE_PIXELS: f64 = 0.8;
 
 /// High-level pointer interaction mode for the canvas.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -288,17 +293,31 @@ fn element_world_point(element: &Element, point: Point) -> Point {
     rotate_point(point, element.bounds().center(), element.angle)
 }
 
-fn rotated_shape_screen_points(
+fn element_stroke_screen_points(
     canvas_rect: egui::Rect,
     viewport: &Viewport,
     element: &Element,
     local_points: impl IntoIterator<Item = Point>,
+    closed: bool,
+    clean: bool,
 ) -> Vec<egui::Pos2> {
-    local_points
+    let world_points: Vec<Point> = local_points
         .into_iter()
-        .map(|point| {
-            world_to_screen_pos(canvas_rect, viewport, element_world_point(element, point))
-        })
+        .map(|point| element_world_point(element, point))
+        .collect();
+    let world_points = if clean {
+        world_points
+    } else {
+        rough_polyline(
+            &world_points,
+            element.seed,
+            ROUGH_AMPLITUDE_PIXELS / viewport.zoom,
+            closed,
+        )
+    };
+    world_points
+        .into_iter()
+        .map(|point| world_to_screen_pos(canvas_rect, viewport, point))
         .collect()
 }
 
@@ -438,6 +457,8 @@ pub struct EpsilonApp {
     pointer_world: Option<Point>,
     /// Whether the canvas grid is visible.
     grid_enabled: bool,
+    /// Draw exact architect-style strokes instead of seeded rough strokes.
+    clean_rendering: bool,
     /// Last canvas rect, used by toolbar zoom controls.
     canvas_rect: egui::Rect,
     /// Current pointer interaction mode for the canvas.
@@ -473,6 +494,7 @@ impl Default for EpsilonApp {
             pointer_world: None,
             canvas_rect: egui::Rect::NOTHING,
             grid_enabled: false,
+            clean_rendering: false,
             pointer_mode: PointerMode::Idle,
             hover_screen: None,
             freehand_points: Vec::new(),
@@ -650,6 +672,7 @@ impl EpsilonApp {
             app.theme = settings.theme;
             app.tool = settings.tool;
             app.grid_enabled = settings.grid_enabled;
+            app.clean_rendering = settings.clean_rendering;
         }
         app
     }
@@ -698,6 +721,10 @@ impl EpsilonApp {
                         let mut grid = self.grid_enabled;
                         if ui.checkbox(&mut grid, "Grid").changed() {
                             self.grid_enabled = grid;
+                        }
+                        let mut clean = self.clean_rendering;
+                        if ui.checkbox(&mut clean, "Clean rendering").changed() {
+                            self.clean_rendering = clean;
                         }
                     });
                     ui.menu_button("Help", |ui| {
@@ -1636,8 +1663,26 @@ impl EpsilonApp {
                         bounds.max,
                         Point::new(bounds.min.x, bounds.max.y),
                     ];
-                    let points =
-                        rotated_shape_screen_points(canvas_rect, &self.viewport, element, corners);
+                    let points = element_stroke_screen_points(
+                        canvas_rect,
+                        &self.viewport,
+                        element,
+                        corners,
+                        true,
+                        true,
+                    );
+                    let stroke_points = if self.clean_rendering {
+                        points.clone()
+                    } else {
+                        element_stroke_screen_points(
+                            canvas_rect,
+                            &self.viewport,
+                            element,
+                            corners,
+                            true,
+                            false,
+                        )
+                    };
                     let corner_radius = roundness.min(rect.width().min(rect.height()) * 0.5);
                     if element.angle.abs() <= 1e-9 && fill_style == FillStyle::Solid {
                         if fill.a() > 0 {
@@ -1646,21 +1691,39 @@ impl EpsilonApp {
                     } else if fill.a() > 0 {
                         paint_fill_path(painter, &points, fill_style, fill);
                     }
-                    if element.angle.abs() <= 1e-9 && stroke_style == StrokeStyle::Solid {
+                    if self.clean_rendering
+                        && element.angle.abs() <= 1e-9
+                        && stroke_style == StrokeStyle::Solid
+                    {
                         painter.rect_stroke(rect, corner_radius, stroke, egui::StrokeKind::Inside);
                     } else {
-                        paint_stroke_path(painter, &points, true, stroke, stroke_style);
+                        paint_stroke_path(painter, &stroke_points, true, stroke, stroke_style);
                     }
                 }
                 ElementKind::Ellipse => {
                     let bounds =
                         Rect::from_xywh(element.x, element.y, element.width, element.height);
-                    let points = rotated_shape_screen_points(
+                    let local_points = ellipse_local_points(bounds);
+                    let points = element_stroke_screen_points(
                         canvas_rect,
                         &self.viewport,
                         element,
-                        ellipse_local_points(bounds),
+                        local_points.iter().copied(),
+                        true,
+                        true,
                     );
+                    let stroke_points = if self.clean_rendering {
+                        points.clone()
+                    } else {
+                        element_stroke_screen_points(
+                            canvas_rect,
+                            &self.viewport,
+                            element,
+                            local_points.iter().copied(),
+                            true,
+                            false,
+                        )
+                    };
                     if element.angle.abs() <= 1e-9 && fill_style == FillStyle::Solid {
                         let center = rect.center();
                         let radius = rect.size() / 2.0;
@@ -1670,42 +1733,56 @@ impl EpsilonApp {
                     } else if fill.a() > 0 {
                         paint_fill_path(painter, &points, fill_style, fill);
                     }
-                    if element.angle.abs() <= 1e-9 && stroke_style == StrokeStyle::Solid {
+                    if self.clean_rendering
+                        && element.angle.abs() <= 1e-9
+                        && stroke_style == StrokeStyle::Solid
+                    {
                         let center = rect.center();
                         let radius = rect.size() / 2.0;
                         painter.add(egui::Shape::ellipse_stroke(center, radius, stroke));
                     } else {
-                        paint_stroke_path(painter, &points, true, stroke, stroke_style);
+                        paint_stroke_path(painter, &stroke_points, true, stroke, stroke_style);
                     }
                 }
                 ElementKind::Diamond => {
                     let bounds =
                         Rect::from_xywh(element.x, element.y, element.width, element.height);
-                    let points = rotated_shape_screen_points(
+                    let local_points = bounds.diamond_points();
+                    let points = element_stroke_screen_points(
                         canvas_rect,
                         &self.viewport,
                         element,
-                        bounds.diamond_points(),
+                        local_points,
+                        true,
+                        true,
                     );
+                    let stroke_points = if self.clean_rendering {
+                        points.clone()
+                    } else {
+                        element_stroke_screen_points(
+                            canvas_rect,
+                            &self.viewport,
+                            element,
+                            local_points,
+                            true,
+                            false,
+                        )
+                    };
                     if fill.a() > 0 {
                         paint_fill_path(painter, &points, fill_style, fill);
                     }
-                    paint_stroke_path(painter, &points, true, stroke, stroke_style);
+                    paint_stroke_path(painter, &stroke_points, true, stroke, stroke_style);
                 }
                 ElementKind::Line => {
-                    if let [start, end] = element.points.as_slice() {
-                        let points = vec![
-                            world_to_screen_pos(
-                                canvas_rect,
-                                &self.viewport,
-                                element_world_point(element, *start),
-                            ),
-                            world_to_screen_pos(
-                                canvas_rect,
-                                &self.viewport,
-                                element_world_point(element, *end),
-                            ),
-                        ];
+                    if element.points.len() == 2 {
+                        let points = element_stroke_screen_points(
+                            canvas_rect,
+                            &self.viewport,
+                            element,
+                            element.points.iter().copied(),
+                            false,
+                            self.clean_rendering,
+                        );
                         paint_stroke_path(painter, &points, false, stroke, stroke_style);
                     }
                 }
@@ -1713,10 +1790,14 @@ impl EpsilonApp {
                     if let [start, end] = element.points.as_slice() {
                         let start = element_world_point(element, *start);
                         let end = element_world_point(element, *end);
-                        let points = vec![
-                            world_to_screen_pos(canvas_rect, &self.viewport, start),
-                            world_to_screen_pos(canvas_rect, &self.viewport, end),
-                        ];
+                        let points = element_stroke_screen_points(
+                            canvas_rect,
+                            &self.viewport,
+                            element,
+                            element.points.iter().copied(),
+                            false,
+                            self.clean_rendering,
+                        );
                         paint_stroke_path(painter, &points, false, stroke, stroke_style);
                         if let Some(head) =
                             arrowhead_screen_points(canvas_rect, &self.viewport, start, end)
@@ -1730,17 +1811,14 @@ impl EpsilonApp {
                     }
                 }
                 ElementKind::Freehand => {
-                    let points: Vec<egui::Pos2> = element
-                        .points
-                        .iter()
-                        .map(|point| {
-                            world_to_screen_pos(
-                                canvas_rect,
-                                &self.viewport,
-                                element_world_point(element, *point),
-                            )
-                        })
-                        .collect();
+                    let points = element_stroke_screen_points(
+                        canvas_rect,
+                        &self.viewport,
+                        element,
+                        element.points.iter().copied(),
+                        false,
+                        self.clean_rendering,
+                    );
                     paint_stroke_path(painter, &points, false, stroke, stroke_style);
                 }
                 ElementKind::Text => {
@@ -2150,6 +2228,7 @@ impl eframe::App for EpsilonApp {
                 theme: self.theme,
                 tool: self.tool,
                 grid_enabled: self.grid_enabled,
+                clean_rendering: self.clean_rendering,
             },
         );
     }
@@ -2414,6 +2493,31 @@ mod tests {
         assert_eq!(
             drawing_end(ElementKind::Arrow, start, end, true),
             constrained
+        );
+    }
+
+    #[test]
+    fn rough_rendering_500_elements_stays_within_budget() {
+        let ctx = egui::Context::default();
+        theme::apply(&ctx, Theme::Dark);
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1000.0, 700.0));
+        let mut app = EpsilonApp::default();
+        for index in 0..500 {
+            let x = (index % 25) as f64 * 30.0;
+            let y = (index / 25) as f64 * 25.0;
+            let mut element = Element::line(Point::new(x, y), Point::new(x + 24.0, y + 18.0));
+            element.style.stroke = DocumentColor::rgb(220, 220, 220);
+            app.document.add(element);
+        }
+
+        let started = std::time::Instant::now();
+        run_app_frame(&mut app, &ctx, screen, Vec::new());
+        let elapsed = started.elapsed();
+
+        assert_eq!(app.document.elements.len(), 500);
+        assert!(
+            elapsed < std::time::Duration::from_secs(2),
+            "500-element rough render took {elapsed:?}"
         );
     }
 
@@ -2944,6 +3048,7 @@ mod tests {
         let mut app = EpsilonApp {
             theme: Theme::Light,
             tool: Tool::Arrow,
+            clean_rendering: true,
             ..Default::default()
         };
         let mut storage = TestStorage::default();
@@ -2952,6 +3057,7 @@ mod tests {
         let restored = EpsilonApp::from_storage(Some(&storage));
         assert_eq!(restored.theme, Theme::Light);
         assert_eq!(restored.tool, Tool::Arrow);
+        assert!(restored.clean_rendering);
     }
 
     #[test]

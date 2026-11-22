@@ -631,3 +631,21 @@ every selected element.
 **Consequences.** Core remains renderer-agnostic while all style options are
 serializable and round-trip safe. Mixed selections currently adopt one edited
 style, which task 3.14 can refine with explicit mixed-value presentation.
+
+---
+
+## D-035 — Rough strokes are seeded core geometry; clean mode is a persisted toggle (2026-11-23)
+
+**Context.** Task 3.13 needs hand-drawn strokes that are reproducible across
+frames and exports, without giving up an exact architect-style mode.
+
+**Decision.** `geometry::rough_polyline` uses a SplitMix-style deterministic
+generator seeded by the element seed to jitter vertices and segment midpoints
+by a screen-space amplitude converted to world units. Fill geometry remains
+exact; only stroke paths are roughened. `clean_rendering` defaults to false,
+lives in app settings, and toggles from View → Clean rendering.
+
+**Consequences.** Re-rendering the same seed is point-identical, exports can
+reuse the same function, and users can switch to clean geometry without changing
+the document. Rough paths add only O(points) work per element; a headless
+500-element render stays under the two-second test budget.

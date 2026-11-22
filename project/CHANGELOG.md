@@ -4,6 +4,11 @@ Notable changes, newest first. Version sections are added at release time.
 
 ## [Unreleased]
 
+### Added — 2026-11-23 (task 3.13)
+
+- Deterministic seeded hand-drawn stroke rendering with a persisted clean
+  architect-style toggle.
+
 ### Added — 2026-11-23 (task 3.12)
 
 - Full element styling: colors, width, opacity, dashed/dotted strokes,

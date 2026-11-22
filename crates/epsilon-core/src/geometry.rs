@@ -466,6 +466,47 @@ pub fn distance_to_polyline(point: Point, points: &[Point], closed: bool) -> f64
     distance
 }
 
+/// Produces deterministic hand-drawn points from a polyline.
+///
+/// Every source vertex and segment midpoint is jittered from `seed`. Reusing a
+/// seed reproduces the same points exactly; zero amplitude returns the input.
+pub fn rough_polyline(points: &[Point], seed: u64, amplitude: f64, closed: bool) -> Vec<Point> {
+    if points.len() < 2 || !amplitude.is_finite() || amplitude <= 0.0 {
+        return points.to_vec();
+    }
+
+    let mut state = seed ^ 0x9E37_79B9_7F4A_7C15;
+    let mut next_offset = || {
+        state = state.wrapping_add(0x9E37_79B9_7F4A_7C15);
+        let mut value = state;
+        value = (value ^ (value >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        value = (value ^ (value >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+        value ^= value >> 31;
+        let unit = (value >> 11) as f64 / (1u64 << 53) as f64;
+        (unit - 0.5) * 2.0 * amplitude
+    };
+
+    let mut rough = Vec::with_capacity(points.len() * 2);
+    for index in 0..points.len() {
+        let point = points[index];
+        rough.push(Point::new(point.x + next_offset(), point.y + next_offset()));
+
+        let next = if index + 1 < points.len() {
+            points[index + 1]
+        } else if closed {
+            points[0]
+        } else {
+            break;
+        };
+        let midpoint = point.lerp(next, 0.5);
+        rough.push(Point::new(
+            midpoint.x + next_offset(),
+            midpoint.y + next_offset(),
+        ));
+    }
+    rough
+}
+
 /// Smooths an open polyline with a three-point moving average, preserving its
 /// endpoints. Extra passes increase smoothing.
 pub fn smooth_polyline(points: &[Point], passes: usize) -> Vec<Point> {
@@ -825,6 +866,27 @@ mod tests {
             distance_to_polyline(Point::new(5.0, 3.0), &square, false),
             3.0
         ));
+    }
+
+    #[test]
+    fn rough_polyline_is_deterministic_and_seed_sensitive() {
+        let points = [
+            Point::new(0.0, 0.0),
+            Point::new(10.0, 5.0),
+            Point::new(20.0, 0.0),
+        ];
+        let first = rough_polyline(&points, 42, 1.5, false);
+        let second = rough_polyline(&points, 42, 1.5, false);
+        let other = rough_polyline(&points, 43, 1.5, false);
+        assert_eq!(first, second);
+        assert_ne!(first, other);
+        assert!(first.len() >= points.len() * 2 - 1);
+        assert!(
+            first
+                .iter()
+                .all(|point| (-2.0..=22.0).contains(&point.x) && (-2.0..=7.0).contains(&point.y))
+        );
+        assert_eq!(rough_polyline(&points, 42, 0.0, false), points.to_vec());
     }
 
     #[test]

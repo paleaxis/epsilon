@@ -2,8 +2,8 @@
 
 Last updated: 2026-11-23
 Current stage: **Stage 3 — Drawing engine**
-Last completed task: **3.12 — Styling system**
-Next task: **3.13 — Hand-drawn rendering**
+Last completed task: **3.13 — Hand-drawn rendering**
+Next task: **3.14 — Properties panel binding**
 
 ## Status
 
@@ -22,7 +22,7 @@ AGENTS.md                   permanent rules
 README.md                   build/run overview
 project/                    STATE, ROADMAP, DECISIONS, CHANGELOG
 crates/epsilon-core/        UI-independent engine (no egui dependency)
-  src/geometry.rs           Point, Rect, shapes, transforms + 28 tests
+  src/geometry.rs           Point, Rect, shapes, rough strokes + 29 tests
   src/document.rs           schema-versioned document, shapes, text, styles, paint order
 crates/epsilon-app/         eframe desktop shell
   src/main.rs               native entry point (persist_window enabled)
@@ -37,7 +37,7 @@ Working UI actions:
 | Where | Action |
 | --- | --- |
 | File menu | Quit (sends `ViewportCommand::Close`) |
-| View menu | "Dark mode" checkbox, applied immediately |
+| View menu | Dark mode, grid and clean-rendering toggles, applied immediately |
 | Help menu | About Epsilon (dialog) |
 | Top toolbar | Wordmark, document title, theme checkbox, About button, version |
 | Canvas | Shape tools draw; Select picks/toggles/marquees, moves, resizes and rotates; text overlays edit in place; middle/space/hand drag pans; wheel zooms |
@@ -70,20 +70,20 @@ Other shell behavior:
   `Context::egui_wants_keyboard_input()`; `cc.storage` is a field.
 - Remote: `origin git@github.com/paleaxis/epsilon.git`, branch `main`.
 
-## Verified commands and results (task 3.12)
+## Verified commands and results (task 3.13)
 
 | Command | Result |
 | --- | --- |
 | `cargo fmt --all -- --check` | exit 0 |
 | `cargo clippy --workspace --all-targets -- -D warnings` | exit 0 |
-| `cargo test --workspace` | **111 passed, 0 failed** (54 app, 57 core) |
+| `cargo test --workspace` | **113 passed, 0 failed** (55 app, 58 core) |
 | `cargo build --workspace` | success, no warnings |
 | `timeout 8 ./target/debug/epsilon` | exit 124 (alive, no stderr) |
 
-Task 3.12 tests cover style round-trips and legacy defaults, selection-wide
-style application and a headless render of dashed, dotted, hatched and
-cross-hatched elements. The suite also retains shell, persistence, viewport,
-grid, document and earlier shape coverage.
+Task 3.13 tests cover deterministic seeded rough points, clean-rendering
+persistence, styled rendering and a 500-element rough headless frame. The suite
+also retains shell, persistence, viewport, grid, document and earlier shape
+coverage.
 
 Native launch was verified by process liveness. Menu clicks and keyboard
 navigation were not automated or visually reviewed; only the action functions
@@ -117,6 +117,8 @@ behind them are tested.
   rotation and rotated polygon rendering.
 - Element styling for colors, width, opacity, stroke/fill patterns and
   rectangle roundness, with selection-wide properties controls.
+- Deterministic seeded hand-drawn strokes with a persisted clean-rendering
+  toggle.
 - Persisted theme/tool; eframe-persisted window geometry and panel widths.
 - Tool palette with shortcuts, painted icons and accessible names.
 - Dark/light themes with central palette and contrast tests.
@@ -150,8 +152,7 @@ automation allowed). Items requiring a human reviewer:
 - Edit menu and formatting actions are not implemented (Stage 4); File has only
   Quit until document I/O (Stage 5).
 - Shell polish and manual verification pass remains (1.9).
-- Rough rendering and full position/size/angle property binding are still
-  pending (Stage 3.13+).
+- Full position/size/angle property binding remains pending (Stage 3.14).
 - No CI; local verification only. No visual/screenshot review performed.
 - Window/panel restore relies on eframe/egui and was not re-measured under niri.
 - Project license: GPL-3.0 (`LICENSE`); manifests declare `GPL-3.0-only`.
@@ -160,7 +161,7 @@ automation allowed). Items requiring a human reviewer:
 
 1. Read `AGENTS.md`, `project/ROADMAP.md`, this file, `project/DECISIONS.md`.
 2. `git status` must be clean; run `cargo test --workspace` for the baseline.
-3. Implement only task **3.13** (hand-drawn rendering).
+3. Implement only task **3.14** (properties panel binding).
 4. Verify format, clippy, tests, build, and `timeout 8 ./target/debug/epsilon`.
 5. Update this file, `ROADMAP.md`, `CHANGELOG.md`, then commit and push.
 
