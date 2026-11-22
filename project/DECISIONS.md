@@ -521,3 +521,20 @@ world units, and projects the resulting vertices through the viewport.
 **Consequences.** Arrowheads keep a stable on-screen size, short arrows retain a
 visible shaft, and the polygon is testable in core without egui. Zero-length
 arrows have no head.
+
+---
+
+## D-029 — Freehand strokes use world-space samples with bounded reduction (2026-11-23)
+
+**Context.** Task 3.7 needs smooth strokes from pointer samples, point
+reduction for storage, and protection against unbounded memory on long drags.
+
+**Decision.** Each freehand sample is converted to world coordinates before it
+is stored, so panning or zooming mid-stroke does not invalidate earlier points.
+Samples closer than 1.5 screen pixels are skipped, the trail is hard-capped at
+4096 points, and commit applies one moving-average smoothing pass followed by
+Ramer–Douglas–Peucker at a 1px screen tolerance.
+
+**Consequences.** Strokes stay world-stable, rendered and stored polylines are
+smaller, and memory is bounded by construction. Pressure is intentionally not
+part of the model yet, so input devices behave uniformly.

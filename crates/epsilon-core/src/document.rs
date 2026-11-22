@@ -187,6 +187,24 @@ impl Element {
         Self::linear(ElementKind::Arrow, start, end)
     }
 
+    /// Creates a freehand polyline from world-space points, or `None` when
+    /// fewer than two points are supplied.
+    pub fn freehand(points: Vec<Point>) -> Option<Self> {
+        if points.len() < 2 {
+            return None;
+        }
+        let bounds = Rect::from_points(points.iter().copied())?;
+        let mut element = Self::new(
+            ElementKind::Freehand,
+            bounds.min.x,
+            bounds.min.y,
+            bounds.width(),
+            bounds.height(),
+        );
+        element.points = points;
+        Some(element)
+    }
+
     fn linear(kind: ElementKind, start: Point, end: Point) -> Self {
         let bounds = Rect::from_corners(start, end);
         let mut element = Self::new(
@@ -370,6 +388,25 @@ mod tests {
         assert_eq!(element.y, 10.0);
         assert_eq!(element.width, 6.0);
         assert_eq!(element.height, 20.0);
+    }
+
+    #[test]
+    fn freehand_element_requires_points_and_derives_bounds() {
+        assert!(Element::freehand(Vec::new()).is_none());
+        assert!(Element::freehand(vec![Point::ZERO]).is_none());
+
+        let points = vec![
+            Point::new(3.0, 4.0),
+            Point::new(-2.0, 8.0),
+            Point::new(6.0, -1.0),
+        ];
+        let element = Element::freehand(points.clone()).expect("two or more points");
+        assert_eq!(element.kind, ElementKind::Freehand);
+        assert_eq!(element.points, points);
+        assert_eq!(element.x, -2.0);
+        assert_eq!(element.y, -1.0);
+        assert_eq!(element.width, 8.0);
+        assert_eq!(element.height, 9.0);
     }
 
     #[test]

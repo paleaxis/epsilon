@@ -309,13 +309,19 @@ to the head length, with unit tests for normal, short and zero-length arrows.
 The app keeps the head a constant screen size across zoom levels by converting
 pixels through the viewport.
 
-### [ ] 3.7 — Freehand tool
+### [x] 3.7 — Freehand tool
 
 Pointer-sampled polyline with pressure-agnostic smoothing and point reduction;
 bounded memory for long strokes.
 
 Acceptance: simplification unit tests; captured points survive pan/zoom during
 drawing; stroke renders smoothly.
+
+Completed 2026-11-23: freehand samples are captured in world space, smoothed
+with a moving average and reduced with Ramer–Douglas–Peucker before commit.
+Input is distance-filtered and hard-capped at 4096 points. Core tests cover
+segment distance, smoothing and simplification; a frame test covers the full
+press/move/release commit path.
 
 ### [ ] 3.8 — Text tool
 

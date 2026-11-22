@@ -226,6 +226,76 @@ impl Rect {
     }
 }
 
+/// Shortest distance from `point` to the segment `start..end`.
+pub fn distance_to_segment(point: Point, start: Point, end: Point) -> f64 {
+    let segment = end - start;
+    let length_squared = segment.dot(segment);
+    if length_squared <= f64::EPSILON {
+        return point.distance(start);
+    }
+    let t = ((point - start).dot(segment) / length_squared).clamp(0.0, 1.0);
+    point.distance(start + segment * t)
+}
+
+/// Smooths an open polyline with a three-point moving average, preserving its
+/// endpoints. Extra passes increase smoothing.
+pub fn smooth_polyline(points: &[Point], passes: usize) -> Vec<Point> {
+    if points.len() < 3 || passes == 0 {
+        return points.to_vec();
+    }
+
+    let mut current = points.to_vec();
+    for _ in 0..passes {
+        let mut smoothed = Vec::with_capacity(current.len());
+        smoothed.push(current[0]);
+        for window in current.windows(3) {
+            smoothed.push((window[0] + window[1] + window[2]) * (1.0 / 3.0));
+        }
+        smoothed.push(current[current.len() - 1]);
+        current = smoothed;
+    }
+    current
+}
+
+/// Reduces an open polyline with Ramer–Douglas–Peucker, keeping endpoints and
+/// any point farther than `tolerance` from the simplified span.
+pub fn simplify_polyline(points: &[Point], tolerance: f64) -> Vec<Point> {
+    if points.len() <= 2 || !tolerance.is_finite() || tolerance <= 0.0 {
+        return points.to_vec();
+    }
+
+    let mut keep = vec![false; points.len()];
+    keep[0] = true;
+    keep[points.len() - 1] = true;
+    let mut spans = vec![(0, points.len() - 1)];
+
+    while let Some((first, last)) = spans.pop() {
+        if last <= first + 1 {
+            continue;
+        }
+        let mut farthest = 0.0;
+        let mut farthest_index = first;
+        for (index, point) in points.iter().enumerate().take(last).skip(first + 1) {
+            let distance = distance_to_segment(*point, points[first], points[last]);
+            if distance > farthest {
+                farthest = distance;
+                farthest_index = index;
+            }
+        }
+        if farthest > tolerance {
+            keep[farthest_index] = true;
+            spans.push((first, farthest_index));
+            spans.push((farthest_index, last));
+        }
+    }
+
+    points
+        .iter()
+        .zip(keep)
+        .filter_map(|(point, keep)| keep.then_some(*point))
+        .collect()
+}
+
 /// Tip and base vertices of an arrowhead ending at `end`.
 ///
 /// The head is clamped to half the shaft and its width to the head length, so
@@ -409,6 +479,64 @@ mod tests {
         let moved = rect.translate(Point::new(3.0, -4.0));
         assert_eq!(moved.min, Point::new(3.0, -4.0));
         assert_eq!(moved.size(), rect.size());
+    }
+
+    #[test]
+    fn distance_to_segment_clamps_to_endpoints() {
+        let start = Point::new(0.0, 0.0);
+        let end = Point::new(10.0, 0.0);
+        assert!(approx(
+            distance_to_segment(Point::new(5.0, 3.0), start, end),
+            3.0
+        ));
+        assert!(approx(
+            distance_to_segment(Point::new(-4.0, 3.0), start, end),
+            5.0
+        ));
+        assert!(approx(
+            distance_to_segment(Point::new(10.0, 0.0), start, end),
+            0.0
+        ));
+        assert!(approx(distance_to_segment(start, start, start), 0.0));
+    }
+
+    #[test]
+    fn smoothing_preserves_endpoints_and_reduces_jitter() {
+        let points = [
+            Point::new(0.0, 0.0),
+            Point::new(1.0, 4.0),
+            Point::new(2.0, -4.0),
+            Point::new(3.0, 4.0),
+            Point::new(4.0, 0.0),
+        ];
+        let smoothed = smooth_polyline(&points, 1);
+
+        assert_eq!(smoothed.len(), points.len());
+        assert_eq!(smoothed[0], points[0]);
+        assert_eq!(smoothed[smoothed.len() - 1], points[points.len() - 1]);
+        assert!(smoothed[1].y.abs() < points[1].y.abs());
+    }
+
+    #[test]
+    fn simplify_polyline_keeps_corners_and_drops_collinear_points() {
+        let straight = [
+            Point::new(0.0, 0.0),
+            Point::new(1.0, 0.01),
+            Point::new(2.0, 0.0),
+            Point::new(3.0, 0.02),
+            Point::new(4.0, 0.0),
+        ];
+        assert_eq!(
+            simplify_polyline(&straight, 0.1),
+            vec![Point::new(0.0, 0.0), Point::new(4.0, 0.0)]
+        );
+
+        let corner = [
+            Point::new(0.0, 0.0),
+            Point::new(5.0, 0.0),
+            Point::new(5.0, 5.0),
+        ];
+        assert_eq!(simplify_polyline(&corner, 0.1), corner);
     }
 
     #[test]

@@ -1,7 +1,9 @@
 use eframe::egui::{self, Align, Layout, RichText};
 
 use epsilon_core::document::{Color as DocumentColor, Document, Element, ElementKind};
-use epsilon_core::geometry::{Point, Rect, arrowhead_points, constrain_angle};
+use epsilon_core::geometry::{
+    Point, Rect, arrowhead_points, constrain_angle, simplify_polyline, smooth_polyline,
+};
 use epsilon_core::grid;
 use epsilon_core::viewport::Viewport;
 
@@ -36,6 +38,13 @@ const LINE_ANGLE_STEP: f64 = std::f64::consts::PI / 12.0;
 const ARROW_HEAD_LENGTH_PIXELS: f64 = 12.0;
 const ARROW_HEAD_HALF_WIDTH_PIXELS: f64 = 6.0;
 
+/// Freehand input is sampled at least this many screen pixels apart.
+const MIN_FREEHAND_SAMPLE_PIXELS: f64 = 1.5;
+/// Simplification tolerance for a finished freehand stroke, in screen pixels.
+const FREEHAND_SIMPLIFY_PIXELS: f64 = 1.0;
+/// Hard cap that keeps long freehand strokes from growing without bound.
+const MAX_FREEHAND_POINTS: usize = 4096;
+
 /// High-level pointer interaction mode for the canvas.
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum PointerMode {
@@ -49,6 +58,10 @@ enum PointerMode {
         start: Point,
         current: Point,
     },
+    /// A freehand stroke being collected in world coordinates.
+    Freehanding {
+        last: Point,
+    },
 }
 
 /// Element kind created by a drag with the given tool.
@@ -59,6 +72,7 @@ fn drawing_kind(tool: Tool) -> Option<ElementKind> {
         Tool::Diamond => Some(ElementKind::Diamond),
         Tool::Line => Some(ElementKind::Line),
         Tool::Arrow => Some(ElementKind::Arrow),
+        Tool::Freehand => Some(ElementKind::Freehand),
         _ => None,
     }
 }
@@ -185,6 +199,8 @@ pub struct EpsilonApp {
     pointer_mode: PointerMode,
     /// Last known pointer position in screen space, including outside canvas.
     hover_screen: Option<egui::Pos2>,
+    /// World-space samples for the freehand stroke currently being drawn.
+    freehand_points: Vec<Point>,
 }
 
 impl Default for EpsilonApp {
@@ -202,6 +218,7 @@ impl Default for EpsilonApp {
             grid_enabled: false,
             pointer_mode: PointerMode::Idle,
             hover_screen: None,
+            freehand_points: Vec::new(),
         }
     }
 }
@@ -639,7 +656,7 @@ impl EpsilonApp {
             }
             // Drawing drags are finished by `update_drawing` after the
             // release event is visible to this frame.
-            PointerMode::Dragging { .. } => {}
+            PointerMode::Dragging { .. } | PointerMode::Freehanding { .. } => {}
         }
 
         let panning = matches!(self.pointer_mode, PointerMode::Panning { .. });
@@ -675,6 +692,27 @@ impl EpsilonApp {
         let shift_down = ctx.input(|input| input.modifiers.shift);
         let typing = ctx.egui_wants_keyboard_input();
 
+        if let PointerMode::Freehanding { last } = self.pointer_mode {
+            let mut last = last;
+            if let Some(pos) = pointer_pos {
+                let world = self.screen_to_world(canvas_rect, pos);
+                if world.distance(last) * self.viewport.zoom >= MIN_FREEHAND_SAMPLE_PIXELS {
+                    if self.freehand_points.len() < MAX_FREEHAND_POINTS {
+                        self.freehand_points.push(world);
+                    }
+                    last = world;
+                }
+            }
+
+            if primary_down {
+                self.pointer_mode = PointerMode::Freehanding { last };
+            } else {
+                self.commit_freehand();
+                self.pointer_mode = PointerMode::Idle;
+            }
+            return;
+        }
+
         if let PointerMode::Dragging {
             kind,
             start,
@@ -695,6 +733,20 @@ impl EpsilonApp {
                 self.commit_shape(kind, start, end);
                 self.pointer_mode = PointerMode::Idle;
             }
+            return;
+        }
+
+        if self.tool == Tool::Freehand
+            && primary_pressed
+            && !space_down
+            && !typing
+            && let Some(pos) = pointer_pos
+            && canvas_rect.contains(pos)
+        {
+            let world = self.screen_to_world(canvas_rect, pos);
+            self.freehand_points.clear();
+            self.freehand_points.push(world);
+            self.pointer_mode = PointerMode::Freehanding { last: world };
             return;
         }
 
@@ -733,11 +785,35 @@ impl EpsilonApp {
             ElementKind::Arrow => Element::arrow(start, end),
             _ => Element::new(kind, rect.min.x, rect.min.y, rect.width(), rect.height()),
         };
-        element.style.stroke = match self.theme {
+        element.style.stroke = self.default_stroke();
+        self.document.add(element);
+    }
+
+    fn default_stroke(&self) -> DocumentColor {
+        match self.theme {
             Theme::Dark => DocumentColor::rgb(235, 235, 235),
             Theme::Light => DocumentColor::BLACK,
-        };
-        self.document.add(element);
+        }
+    }
+
+    /// Smooths, simplifies and commits the collected freehand stroke.
+    fn commit_freehand(&mut self) {
+        let smoothed = smooth_polyline(&self.freehand_points, 1);
+        let points = simplify_polyline(&smoothed, FREEHAND_SIMPLIFY_PIXELS / self.viewport.zoom);
+        let screen_length = points
+            .windows(2)
+            .map(|pair| pair[0].distance(pair[1]))
+            .sum::<f64>()
+            * self.viewport.zoom;
+        self.freehand_points.clear();
+
+        if screen_length < MIN_SHAPE_PIXELS {
+            return;
+        }
+        if let Some(mut element) = Element::freehand(points) {
+            element.style.stroke = self.default_stroke();
+            self.document.add(element);
+        }
     }
 
     /// Draws the document in paint order through the screen-space adapter.
@@ -805,6 +881,16 @@ impl EpsilonApp {
                                 egui::Stroke::NONE,
                             ));
                         }
+                    }
+                }
+                ElementKind::Freehand => {
+                    let points: Vec<egui::Pos2> = element
+                        .points
+                        .iter()
+                        .map(|point| world_to_screen_pos(canvas_rect, &self.viewport, *point))
+                        .collect();
+                    if points.len() >= 2 {
+                        painter.add(egui::Shape::line(points, stroke));
                     }
                 }
                 _ => {}
@@ -891,6 +977,15 @@ impl EpsilonApp {
                     }
                 }
                 _ => {}
+            }
+        } else if let PointerMode::Freehanding { .. } = self.pointer_mode {
+            let points: Vec<egui::Pos2> = self
+                .freehand_points
+                .iter()
+                .map(|point| world_to_screen_pos(canvas_rect, &self.viewport, *point))
+                .collect();
+            if points.len() >= 2 {
+                painter.add(egui::Shape::line(points, egui::Stroke::new(1.0, accent)));
             }
         }
     }
@@ -1387,6 +1482,16 @@ mod tests {
         };
         assert!(((end.x - start.x) * app.viewport.zoom - 80.0).abs() < 0.01);
         assert!(((end.y - start.y) * app.viewport.zoom - 60.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn freehand_drag_commits_polyline() {
+        let app = drag_shape_on_canvas(Tool::Freehand);
+        assert_eq!(app.document.elements.len(), 1);
+        let element = &app.document.elements[0];
+        assert_eq!(element.kind, ElementKind::Freehand);
+        assert!(element.points.len() >= 2);
+        assert!(element.points.len() <= MAX_FREEHAND_POINTS);
     }
 
     #[test]

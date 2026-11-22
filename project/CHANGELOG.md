@@ -4,6 +4,11 @@ Notable changes, newest first. Version sections are added at release time.
 
 ## [Unreleased]
 
+### Added — 2026-11-23 (task 3.7)
+
+- Freehand tool with world-space sampling, smoothing, simplification and a
+  bounded point budget.
+
 ### Added — 2026-11-23 (task 3.6)
 
 - Arrow tool with zoom-independent arrowheads and the shared Shift angle
