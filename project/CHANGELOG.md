@@ -4,6 +4,13 @@ Notable changes, newest first. Version sections are added at release time.
 
 ## [Unreleased]
 
+### Added — 2026-11-22 (task 2.4)
+
+- Ctrl+wheel and pinch zoom anchored at the cursor, plus +/- and reset buttons.
+- Plus/Minus/0 shortcuts zoom and reset; wheel scrolls, Shift+wheel scrolls
+  horizontally.
+- Status bar now reports the live zoom percentage.
+
 ### Added — 2026-11-22 (task 2.3)
 
 - Canvas panning via middle-button drag, space+drag and hand-tool drag.

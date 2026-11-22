@@ -42,6 +42,8 @@ pub struct EpsilonApp {
     /// Last pointer position in world coordinates, if the pointer is over the
     /// canvas. Drives the status-bar readout.
     pointer_world: Option<Point>,
+    /// Last canvas rect, used by toolbar zoom controls.
+    canvas_rect: egui::Rect,
     /// Whether a pan gesture is currently active.
     panning: bool,
     /// Last pointer position (screen space) seen during a pan gesture.
@@ -58,6 +60,7 @@ impl Default for EpsilonApp {
             help_open: false,
             viewport: Viewport::default(),
             pointer_world: None,
+            canvas_rect: egui::Rect::NOTHING,
             panning: false,
             pan_last: None,
         }
@@ -69,6 +72,10 @@ impl Default for EpsilonApp {
 enum Action {
     SelectTool(Tool),
     ToggleHelp,
+    ZoomIn,
+    ZoomOut,
+    ZoomReset,
+    ZoomFit,
 }
 
 /// One entry in the central shortcut registry.
@@ -165,6 +172,44 @@ const KEYBINDINGS: &[KeyBinding] = &[
         action: Action::ToggleHelp,
         description: "Toggle shortcut help",
     },
+    KeyBinding {
+        shortcut: "+",
+        key: egui::Key::Plus,
+        modifiers: egui::Modifiers::NONE,
+        action: Action::ZoomIn,
+        description: "Zoom in",
+    },
+    KeyBinding {
+        shortcut: "=",
+        key: egui::Key::Equals,
+        modifiers: egui::Modifiers::NONE,
+        action: Action::ZoomIn,
+        description: "Zoom in",
+    },
+    KeyBinding {
+        shortcut: "-",
+        key: egui::Key::Minus,
+        modifiers: egui::Modifiers::NONE,
+        action: Action::ZoomOut,
+        description: "Zoom out",
+    },
+    KeyBinding {
+        shortcut: "0",
+        key: egui::Key::Num0,
+        modifiers: egui::Modifiers::NONE,
+        action: Action::ZoomReset,
+        description: "Reset zoom",
+    },
+    KeyBinding {
+        shortcut: "Shift+0",
+        key: egui::Key::Num0,
+        modifiers: egui::Modifiers {
+            shift: true,
+            ..egui::Modifiers::NONE
+        },
+        action: Action::ZoomFit,
+        description: "Fit to content",
+    },
 ];
 
 impl EpsilonApp {
@@ -253,6 +298,21 @@ impl EpsilonApp {
                         }
                         self.theme_toggle(ui);
                         ui.label(RichText::new(concat!("v", env!("CARGO_PKG_VERSION"))).weak());
+
+                        let anchor = if self.canvas_rect == egui::Rect::NOTHING {
+                            Point::new(0.0, 0.0)
+                        } else {
+                            pointer_anchor(ui.ctx(), self.canvas_rect)
+                        };
+                        if ui.button("-").clicked() {
+                            self.viewport.zoom_by(0.8, anchor);
+                        }
+                        if ui.button("+").clicked() {
+                            self.viewport.zoom_by(1.25, anchor);
+                        }
+                        if ui.button("0").clicked() {
+                            self.viewport = Viewport::default();
+                        }
                     });
                 });
             });
@@ -286,7 +346,7 @@ impl EpsilonApp {
 
     /// Applies registered keyboard shortcuts, unless a widget currently owns
     /// keyboard input (a text field, for example).
-    fn handle_shortcuts(&mut self, ctx: &egui::Context) {
+    fn handle_shortcuts(&mut self, ctx: &egui::Context, canvas_rect: egui::Rect) {
         if ctx.egui_wants_keyboard_input() {
             return;
         }
@@ -331,9 +391,14 @@ impl EpsilonApp {
                 .iter()
                 .find(|binding| binding.key == key && binding.modifiers == modifiers)
             {
+                let anchor = pointer_anchor(ctx, canvas_rect);
                 match binding.action {
                     Action::SelectTool(tool) => self.tool = tool,
                     Action::ToggleHelp => self.help_open = !self.help_open,
+                    Action::ZoomIn => self.viewport.zoom_by(1.25, anchor),
+                    Action::ZoomOut => self.viewport.zoom_by(0.8, anchor),
+                    Action::ZoomReset => self.viewport = Viewport::default(),
+                    Action::ZoomFit => self.viewport = Viewport::default(),
                 }
             }
         }
@@ -433,6 +498,49 @@ impl EpsilonApp {
         }
     }
 
+    fn update_zoom(&mut self, ctx: &egui::Context, canvas_rect: egui::Rect) {
+        let in_canvas = ctx
+            .pointer_hover_pos()
+            .is_some_and(|pos| canvas_rect.contains(pos));
+        if !in_canvas {
+            return;
+        }
+
+        let anchor = pointer_anchor(ctx, canvas_rect);
+        let zoom_delta = ctx.input(|input| input.zoom_delta());
+        if (zoom_delta - 1.0).abs() > f32::EPSILON {
+            self.viewport.zoom_by(zoom_delta as f64, anchor);
+        }
+
+        let events: Vec<egui::Event> = ctx.input(|input| input.events.clone());
+        for event in events {
+            let egui::Event::MouseWheel {
+                delta,
+                modifiers,
+                unit,
+                ..
+            } = event
+            else {
+                continue;
+            };
+            if modifiers.ctrl || modifiers.command {
+                continue;
+            }
+
+            let scale = match unit {
+                egui::MouseWheelUnit::Line => 40.0,
+                egui::MouseWheelUnit::Page => canvas_rect.height(),
+                egui::MouseWheelUnit::Point => 1.0,
+            };
+            if modifiers.shift {
+                self.viewport.offset.x += (delta.y * scale) as f64;
+            } else {
+                self.viewport.offset.x += (delta.x * scale) as f64;
+                self.viewport.offset.y += (delta.y * scale) as f64;
+            }
+        }
+    }
+
     fn status_bar(&self, ui: &mut egui::Ui) {
         egui::Panel::bottom("status_bar")
             .exact_size(layout::STATUS_BAR_HEIGHT)
@@ -471,6 +579,7 @@ impl EpsilonApp {
             .frame(egui::Frame::NONE.fill(background))
             .show(ui, |ui| {
                 let rect = ui.max_rect();
+                self.canvas_rect = rect;
 
                 // Track the pointer in world coordinates for the status bar.
                 self.pointer_world = ui.ctx().pointer_hover_pos().and_then(|pos| {
@@ -485,6 +594,7 @@ impl EpsilonApp {
                 });
 
                 self.update_pan(ui.ctx(), rect);
+                self.update_zoom(ui.ctx(), rect);
 
                 // Prove the coordinate pipeline: the world origin is projected
                 // through the viewport and marked on screen.
@@ -567,10 +677,25 @@ fn request_quit(ctx: &egui::Context) {
     ctx.send_viewport_cmd(egui::ViewportCommand::Close);
 }
 
+fn pointer_anchor(ctx: &egui::Context, canvas_rect: egui::Rect) -> Point {
+    if let Some(pos) = ctx.pointer_hover_pos()
+        && canvas_rect.contains(pos)
+    {
+        return Point::new(
+            (pos.x - canvas_rect.min.x) as f64,
+            (pos.y - canvas_rect.min.y) as f64,
+        );
+    }
+    Point::new(
+        canvas_rect.width() as f64 * 0.5,
+        canvas_rect.height() as f64 * 0.5,
+    )
+}
+
 impl eframe::App for EpsilonApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        self.handle_shortcuts(ui.ctx());
-        let _canvas_rect = self.show_shell(ui);
+        let canvas_rect = self.show_shell(ui);
+        self.handle_shortcuts(ui.ctx(), canvas_rect);
         self.about_window(ui.ctx());
         self.help_window(ui.ctx());
     }
@@ -688,7 +813,8 @@ mod tests {
             }],
             ..Default::default()
         };
-        let output = ctx.run_ui(input, |ui| app.handle_shortcuts(ui.ctx()));
+        let canvas_rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(720.0, 480.0));
+        let output = ctx.run_ui(input, |ui| app.handle_shortcuts(ui.ctx(), canvas_rect));
         output.drop_without_applying_deltas();
     }
 

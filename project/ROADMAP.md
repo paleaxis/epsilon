@@ -186,7 +186,7 @@ hand-tool drag. Screen-space deltas update the viewport offset directly, space
 panning is disabled while a widget owns keyboard input, and cursor feedback is
 provided.
 
-### [ ] 2.4 — Zoom
+### [x] 2.4 — Zoom
 
 Ctrl+wheel and pinch zoom anchored at the cursor, +/- buttons and shortcuts,
 `0`/`Shift+0` reset/fit-to-content; wheel scrolls vertically; Shift+wheel
@@ -194,6 +194,10 @@ horizontally.
 
 Acceptance: point under cursor is invariant across zoom steps (manual + unit
 test); zoom limits enforced; UI reflects zoom percentage.
+
+Completed 2026-11-22: Ctrl+wheel/pinch zoom is anchored at the cursor, +/- and
+0 buttons plus Plus/Minus/0 shortcuts work, wheel scrolling is horizontal with
+Shift, and the status bar shows the zoom percentage.
 
 ### [ ] 2.5 — Optional grid
 

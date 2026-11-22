@@ -371,3 +371,18 @@ pointer capture API is used; the drag ends when no pointer button is down.
 **Consequences.** The implementation is simple and reversible. Stage 2.6 can
 replace these fields with a proper state machine without changing the viewport
 API.
+
+---
+
+## D-020 — Zoom input uses egui deltas plus raw wheel events (2026-11-22)
+
+**Context.** Task 2.4 needs Ctrl+wheel, pinch, scrolling and keyboard zoom.
+
+**Decision.** The canvas applies `InputState::zoom_delta()` for Ctrl+wheel and
+pinch gestures, and consumes raw `MouseWheel` events for ordinary scrolling.
+Keyboard zoom uses the central shortcut registry and anchors at the pointer or
+canvas center. `0` resets to the default viewport; `Shift+0` is reserved for
+fit-to-content and currently resets as well because no document content exists.
+
+**Consequences.** Zoom and scroll stay responsive without duplicating egui's
+touch handling. Fit-to-content can be refined when document bounds exist.
