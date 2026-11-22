@@ -4,6 +4,13 @@ Notable changes, newest first. Version sections are added at release time.
 
 ## [Unreleased]
 
+### Added — 2026-11-23 (task 3.5)
+
+- Line tool with live preview, world-space endpoints and Shift-constrained
+  15-degree angles.
+- Element `points` storage for linear geometry, with line bounds derived from
+  the endpoints.
+
 ### Added — 2026-11-23 (task 3.4)
 
 - Diamond tool with drag preview and document rendering.

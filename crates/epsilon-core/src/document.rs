@@ -8,6 +8,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use serde::{Deserialize, Serialize};
 
+use crate::geometry::{Point, Rect};
 use crate::grid;
 
 /// Current serialized document schema version.
@@ -131,6 +132,11 @@ pub struct Element {
     pub height: f64,
     pub angle: f64,
     pub style: ElementStyle,
+    /// World-space vertices for linear elements (`Line`, `Arrow`, `Freehand`).
+    /// Closed shapes leave this empty; `x`/`y`/`width`/`height` are the
+    /// derived bounds.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub points: Vec<Point>,
     /// Paint order; larger values are drawn later.
     pub z_order: i32,
     /// Deterministic seed for procedural detail such as hand-drawn jitter.
@@ -163,10 +169,26 @@ impl Element {
             height,
             angle: 0.0,
             style: ElementStyle::default(),
+            points: Vec::new(),
             z_order: 0,
             seed: id.get(),
             version: 1,
         }
+    }
+
+    /// Creates a line whose endpoints are stored in world space. The element's
+    /// base bounds are derived from those endpoints.
+    pub fn line(start: Point, end: Point) -> Self {
+        let bounds = Rect::from_corners(start, end);
+        let mut element = Self::new(
+            ElementKind::Line,
+            bounds.min.x,
+            bounds.min.y,
+            bounds.width(),
+            bounds.height(),
+        );
+        element.points = vec![start, end];
+        element
     }
 }
 
@@ -264,6 +286,10 @@ mod tests {
         second.style.opacity = 0.75;
         document.elements.push(second);
 
+        let mut third = Element::line(Point::new(-5.0, 6.0), Point::new(7.0, -8.0));
+        third.z_order = 3;
+        document.elements.push(third);
+
         document
     }
 
@@ -307,6 +333,20 @@ mod tests {
             order,
             vec![ElementId::new(2), ElementId::new(3), ElementId::new(1)]
         );
+    }
+
+    #[test]
+    fn line_element_keeps_world_endpoints_and_derives_bounds() {
+        let start = Point::new(10.0, 70.0);
+        let end = Point::new(4.0, 20.0);
+        let element = Element::line(start, end);
+
+        assert_eq!(element.kind, ElementKind::Line);
+        assert_eq!(element.points, vec![start, end]);
+        assert_eq!(element.x, 4.0);
+        assert_eq!(element.y, 20.0);
+        assert_eq!(element.width, 6.0);
+        assert_eq!(element.height, 50.0);
     }
 
     #[test]

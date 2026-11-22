@@ -1,7 +1,7 @@
 use eframe::egui::{self, Align, Layout, RichText};
 
 use epsilon_core::document::{Color as DocumentColor, Document, Element, ElementKind};
-use epsilon_core::geometry::{Point, Rect};
+use epsilon_core::geometry::{Point, Rect, constrain_angle};
 use epsilon_core::grid;
 use epsilon_core::viewport::Viewport;
 
@@ -26,8 +26,11 @@ struct PersistedSettings {
     grid_enabled: bool,
 }
 
-/// Minimum on-screen width/height for a shape drag to be committed.
+/// Minimum on-screen width/height (or line length) for a drag to be committed.
 const MIN_SHAPE_PIXELS: f64 = 3.0;
+
+/// Shift-constrained lines snap to 15-degree increments.
+const LINE_ANGLE_STEP: f64 = std::f64::consts::PI / 12.0;
 
 /// High-level pointer interaction mode for the canvas.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -50,8 +53,27 @@ fn drawing_kind(tool: Tool) -> Option<ElementKind> {
         Tool::Rectangle => Some(ElementKind::Rectangle),
         Tool::Ellipse => Some(ElementKind::Ellipse),
         Tool::Diamond => Some(ElementKind::Diamond),
+        Tool::Line => Some(ElementKind::Line),
         _ => None,
     }
+}
+
+/// Applies the active drag's optional constraint to its endpoint.
+fn drawing_end(kind: ElementKind, start: Point, end: Point, constrain: bool) -> Point {
+    if constrain && kind == ElementKind::Line {
+        constrain_angle(start, end, LINE_ANGLE_STEP)
+    } else {
+        end
+    }
+}
+
+/// Projects a world-space point into canvas screen space.
+fn world_to_screen_pos(canvas_rect: egui::Rect, viewport: &Viewport, point: Point) -> egui::Pos2 {
+    let screen = viewport.world_to_screen(point);
+    egui::pos2(
+        canvas_rect.min.x + screen.x as f32,
+        canvas_rect.min.y + screen.y as f32,
+    )
 }
 
 /// Projects an element's world bounds into screen space.
@@ -60,19 +82,12 @@ fn element_screen_rect(
     viewport: &Viewport,
     element: &Element,
 ) -> egui::Rect {
-    let min = viewport.world_to_screen(Point::new(element.x, element.y));
-    let max = viewport.world_to_screen(Point::new(
-        element.x + element.width,
-        element.y + element.height,
-    ));
     egui::Rect::from_two_pos(
-        egui::pos2(
-            canvas_rect.min.x + min.x as f32,
-            canvas_rect.min.y + min.y as f32,
-        ),
-        egui::pos2(
-            canvas_rect.min.x + max.x as f32,
-            canvas_rect.min.y + max.y as f32,
+        world_to_screen_pos(canvas_rect, viewport, Point::new(element.x, element.y)),
+        world_to_screen_pos(
+            canvas_rect,
+            viewport,
+            Point::new(element.x + element.width, element.y + element.height),
         ),
     )
 }
@@ -86,13 +101,7 @@ fn diamond_screen_points(
     bounds
         .diamond_points()
         .into_iter()
-        .map(|point| {
-            let screen = viewport.world_to_screen(point);
-            egui::pos2(
-                canvas_rect.min.x + screen.x as f32,
-                canvas_rect.min.y + screen.y as f32,
-            )
-        })
+        .map(|point| world_to_screen_pos(canvas_rect, viewport, point))
         .collect()
 }
 
@@ -638,6 +647,7 @@ impl EpsilonApp {
         let primary_down = ctx.input(|input| input.pointer.primary_down());
         let primary_pressed = ctx.input(|input| input.pointer.primary_pressed());
         let space_down = ctx.input(|input| input.key_down(egui::Key::Space));
+        let shift_down = ctx.input(|input| input.modifiers.shift);
         let typing = ctx.egui_wants_keyboard_input();
 
         if let PointerMode::Dragging {
@@ -656,7 +666,8 @@ impl EpsilonApp {
                     current,
                 };
             } else {
-                self.commit_shape(kind, start, current);
+                let end = drawing_end(kind, start, current, shift_down);
+                self.commit_shape(kind, start, end);
                 self.pointer_mode = PointerMode::Idle;
             }
             return;
@@ -683,11 +694,20 @@ impl EpsilonApp {
         let rect = Rect::from_corners(start, end);
         let screen_width = rect.width() * self.viewport.zoom;
         let screen_height = rect.height() * self.viewport.zoom;
-        if screen_width < MIN_SHAPE_PIXELS || screen_height < MIN_SHAPE_PIXELS {
+        let too_small = if kind == ElementKind::Line {
+            start.distance(end) * self.viewport.zoom < MIN_SHAPE_PIXELS
+        } else {
+            screen_width < MIN_SHAPE_PIXELS || screen_height < MIN_SHAPE_PIXELS
+        };
+        if too_small {
             return;
         }
 
-        let mut element = Element::new(kind, rect.min.x, rect.min.y, rect.width(), rect.height());
+        let mut element = if kind == ElementKind::Line {
+            Element::line(start, end)
+        } else {
+            Element::new(kind, rect.min.x, rect.min.y, rect.width(), rect.height())
+        };
         element.style.stroke = match self.theme {
             Theme::Dark => DocumentColor::rgb(235, 235, 235),
             Theme::Light => DocumentColor::BLACK,
@@ -731,13 +751,30 @@ impl EpsilonApp {
                     }
                     painter.add(egui::Shape::closed_line(points, stroke));
                 }
+                ElementKind::Line => {
+                    if let [start, end] = element.points.as_slice() {
+                        painter.line_segment(
+                            [
+                                world_to_screen_pos(canvas_rect, &self.viewport, *start),
+                                world_to_screen_pos(canvas_rect, &self.viewport, *end),
+                            ],
+                            stroke,
+                        );
+                    }
+                }
                 _ => {}
             }
         }
     }
 
     /// Draws the live shape preview while dragging.
-    fn paint_draft(&self, painter: &egui::Painter, canvas_rect: egui::Rect, accent: egui::Color32) {
+    fn paint_draft(
+        &self,
+        painter: &egui::Painter,
+        canvas_rect: egui::Rect,
+        accent: egui::Color32,
+        constrain: bool,
+    ) {
         if let PointerMode::Dragging {
             kind,
             start,
@@ -778,6 +815,16 @@ impl EpsilonApp {
                         points,
                         egui::Stroke::new(1.0, accent),
                     ));
+                }
+                ElementKind::Line => {
+                    let end = drawing_end(kind, start, current, constrain);
+                    painter.line_segment(
+                        [
+                            world_to_screen_pos(canvas_rect, &self.viewport, start),
+                            world_to_screen_pos(canvas_rect, &self.viewport, end),
+                        ],
+                        egui::Stroke::new(1.0, accent),
+                    );
                 }
                 _ => {}
             }
@@ -950,7 +997,8 @@ impl EpsilonApp {
                 }
 
                 self.paint_document(ui.painter(), rect);
-                self.paint_draft(ui.painter(), rect, ui.visuals().hyperlink_color);
+                let shift_down = ui.ctx().input(|input| input.modifiers.shift);
+                self.paint_draft(ui.painter(), rect, ui.visuals().hyperlink_color, shift_down);
 
                 // Prove the coordinate pipeline: the world origin is projected
                 // through the viewport and marked on screen.
@@ -1245,6 +1293,44 @@ mod tests {
         let expected_height = 60.0 / app.viewport.zoom;
         assert!((element.width - expected_width).abs() < 0.01);
         assert!((element.height - expected_height).abs() < 0.01);
+    }
+
+    #[test]
+    fn line_drag_stores_world_space_endpoints() {
+        let app = drag_shape_on_canvas(Tool::Line);
+        assert_eq!(app.document.elements.len(), 1);
+        let element = &app.document.elements[0];
+        assert_eq!(element.kind, ElementKind::Line);
+        let [start, end] = element.points.as_slice() else {
+            panic!("line should store exactly two endpoints");
+        };
+        assert!(((end.x - start.x) * app.viewport.zoom - 80.0).abs() < 0.01);
+        assert!(((end.y - start.y) * app.viewport.zoom - 60.0).abs() < 0.01);
+        assert!((element.x - start.x.min(end.x)).abs() < 0.01);
+        assert!((element.y - start.y.min(end.y)).abs() < 0.01);
+        assert!((element.width - (end.x - start.x).abs()).abs() < 0.01);
+        assert!((element.height - (end.y - start.y).abs()).abs() < 0.01);
+    }
+
+    #[test]
+    fn line_commit_allows_thin_lines_but_discards_short_ones() {
+        let mut app = EpsilonApp::default();
+        app.commit_shape(ElementKind::Line, Point::ZERO, Point::new(10.0, 0.0));
+        assert_eq!(app.document.elements.len(), 1);
+
+        app.commit_shape(ElementKind::Line, Point::ZERO, Point::new(2.0, 0.0));
+        assert_eq!(app.document.elements.len(), 1);
+    }
+
+    #[test]
+    fn line_constraint_applies_only_to_constrained_lines() {
+        let start = Point::new(10.0, 20.0);
+        let end = Point::new(110.0, 30.0);
+
+        let constrained = drawing_end(ElementKind::Line, start, end, true);
+        assert!((constrained.y - start.y).abs() < 1e-9);
+        assert_eq!(drawing_end(ElementKind::Rectangle, start, end, true), end);
+        assert_eq!(drawing_end(ElementKind::Line, start, end, false), end);
     }
 
     #[test]

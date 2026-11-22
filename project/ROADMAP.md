@@ -281,13 +281,20 @@ Diamond tool uses the shared drag pipeline, and document/preview rendering
 project those vertices through the viewport; a zoomed projection test confirms
 they coincide with the element's screen bounds.
 
-### [ ] 3.5 — Line tool
+### [x] 3.5 — Line tool
 
 Two-point line with shift-constrain to 15° increments and multi-click polyline
 only if scoped to a single segment for this task.
 
 Acceptance: endpoints stored in world space, rotate/resize data model sound,
 constraint math tested.
+
+Completed 2026-11-23: `Element::line` stores both endpoints in world space and
+derives the base bounds from them, with reverse drags preserving direction.
+The Line tool uses the shared drag pipeline, previews and renders the segment,
+and accepts thin horizontal/vertical lines by testing segment length rather
+than both bounds. Shift constrains the endpoint through a tested core function
+that snaps to 15° increments while preserving length.
 
 ### [ ] 3.6 — Arrow tool
 

@@ -485,3 +485,23 @@ through the viewport for both committed elements and the live drag preview.
 because rendering derives its vertices from the element bounds that future hit
 testing and export will use, no separate screen-space diamond math can drift.
 Other polygon shapes can follow the same pattern.
+
+---
+
+## D-027 — Linear elements store world-space points with derived bounds (2026-11-23)
+
+**Context.** Task 3.5 needs two-point lines whose endpoints survive
+serialization and keep their direction, while the shared element schema still
+provides `x`/`y`/`width`/`height` bounds for paint order, projection and future
+selection handles.
+
+**Decision.** `Element` gains a `points` vector for linear geometry, serialized
+only when non-empty. `Element::line` stores both endpoints in world space and
+sets the base bounds from their min/max corners. A line drag therefore commits
+the exact world endpoints rather than a screen-space path or a bounds diagonal.
+
+**Consequences.** Positive and reverse drags remain distinguishable, JSON
+round-trips preserve endpoints, and later resize/rotate operations can
+transform the points and recompute bounds without ambiguity. Closed shapes keep
+`points` empty. The new field is serde-defaulted, so older documents remain
+readable without a schema-version bump.

@@ -11,12 +11,14 @@
 
 use std::ops::{Add, AddAssign, Mul, Neg, Sub, SubAssign};
 
+use serde::{Deserialize, Serialize};
+
 /// A point (position) or displacement (vector) in 2D space.
 ///
 /// Using one type for both is a deliberate simplification: the engine performs
 /// little vector algebra and having distinct `Point`/`Vector` types would add
 /// conversions without preventing real bugs.
-#[derive(Debug, Clone, Copy, PartialEq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
 pub struct Point {
     pub x: f64,
     pub y: f64,
@@ -224,6 +226,25 @@ impl Rect {
     }
 }
 
+/// Rotates `end` around `origin` to the nearest multiple of `step_radians`,
+/// preserving its distance from `origin`.
+///
+/// Zero-length segments and non-positive or non-finite steps are returned
+/// unchanged.
+pub fn constrain_angle(origin: Point, end: Point, step_radians: f64) -> Point {
+    let delta = end - origin;
+    let Some(direction) = delta.normalized() else {
+        return end;
+    };
+    if !step_radians.is_finite() || step_radians <= 0.0 {
+        return end;
+    }
+
+    let angle = direction.y.atan2(direction.x);
+    let snapped = (angle / step_radians).round() * step_radians;
+    origin + Point::new(snapped.cos(), snapped.sin()) * delta.length()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -362,5 +383,34 @@ mod tests {
         let moved = rect.translate(Point::new(3.0, -4.0));
         assert_eq!(moved.min, Point::new(3.0, -4.0));
         assert_eq!(moved.size(), rect.size());
+    }
+
+    #[test]
+    fn constrain_angle_snaps_to_fifteen_degree_steps() {
+        let origin = Point::new(10.0, 20.0);
+        let step = std::f64::consts::PI / 12.0;
+
+        let horizontal = constrain_angle(origin, Point::new(110.0, 30.0), step);
+        assert!(approx(horizontal.x - origin.x, (100.0f64).hypot(10.0)));
+        assert!(approx(horizontal.y, origin.y));
+
+        let diagonal = constrain_angle(origin, origin + Point::new(100.0, 100.0), step);
+        assert!(approx(diagonal.x - origin.x, 100.0));
+        assert!(approx(diagonal.y - origin.y, 100.0));
+
+        let near_vertical = constrain_angle(origin, origin + Point::new(10.0, -100.0), step);
+        assert!(approx(near_vertical.x, origin.x));
+        assert!(approx(near_vertical.y - origin.y, -(100.0f64).hypot(10.0)));
+    }
+
+    #[test]
+    fn constrain_angle_preserves_zero_and_invalid_steps() {
+        let origin = Point::new(4.0, 5.0);
+        let end = Point::new(9.0, 7.0);
+
+        assert_eq!(constrain_angle(origin, origin, 0.1), origin);
+        assert_eq!(constrain_angle(origin, end, 0.0), end);
+        assert_eq!(constrain_angle(origin, end, -0.1), end);
+        assert_eq!(constrain_angle(origin, end, f64::NAN), end);
     }
 }
