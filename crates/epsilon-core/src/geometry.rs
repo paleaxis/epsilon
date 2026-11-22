@@ -226,6 +226,38 @@ impl Rect {
     }
 }
 
+/// Rotates `point` around `center` by `angle` radians. Positive angles are
+/// clockwise in the y-down world convention.
+pub fn rotate_point(point: Point, center: Point, angle: f64) -> Point {
+    let offset = point - center;
+    let (sin, cos) = angle.sin_cos();
+    center
+        + Point::new(
+            offset.x * cos - offset.y * sin,
+            offset.x * sin + offset.y * cos,
+        )
+}
+
+/// Even-odd containment test for an arbitrary polygon.
+pub fn point_in_polygon(point: Point, polygon: &[Point]) -> bool {
+    if polygon.len() < 3 {
+        return false;
+    }
+    let mut inside = false;
+    let mut previous = polygon[polygon.len() - 1];
+    for &current in polygon {
+        let crosses = (current.y > point.y) != (previous.y > point.y)
+            && point.x
+                < (previous.x - current.x) * (point.y - current.y) / (previous.y - current.y)
+                    + current.x;
+        if crosses {
+            inside = !inside;
+        }
+        previous = current;
+    }
+    inside
+}
+
 /// Shortest distance from `point` to the segment `start..end`.
 pub fn distance_to_segment(point: Point, start: Point, end: Point) -> f64 {
     let segment = end - start;
@@ -235,6 +267,46 @@ pub fn distance_to_segment(point: Point, start: Point, end: Point) -> f64 {
     }
     let t = ((point - start).dot(segment) / length_squared).clamp(0.0, 1.0);
     point.distance(start + segment * t)
+}
+
+/// Shortest distance from `point` to the nearest edge of `rect`. Points inside
+/// return their distance to the closest side; outside points measure to the
+/// clamped nearest point on the rectangle.
+pub fn distance_to_rect(point: Point, rect: Rect) -> f64 {
+    if rect.contains(point) {
+        return (point.x - rect.min.x)
+            .min(rect.max.x - point.x)
+            .min(point.y - rect.min.y)
+            .min(rect.max.y - point.y);
+    }
+    let nearest = Point::new(
+        point.x.clamp(rect.min.x, rect.max.x),
+        point.y.clamp(rect.min.y, rect.max.y),
+    );
+    point.distance(nearest)
+}
+
+/// Shortest distance from `point` to a polyline, optionally closing the loop.
+pub fn distance_to_polyline(point: Point, points: &[Point], closed: bool) -> f64 {
+    if points.is_empty() {
+        return f64::INFINITY;
+    }
+    if points.len() == 1 {
+        return point.distance(points[0]);
+    }
+
+    let mut distance = points
+        .windows(2)
+        .map(|pair| distance_to_segment(point, pair[0], pair[1]))
+        .fold(f64::INFINITY, f64::min);
+    if closed {
+        distance = distance.min(distance_to_segment(
+            point,
+            points[points.len() - 1],
+            points[0],
+        ));
+    }
+    distance
 }
 
 /// Smooths an open polyline with a three-point moving average, preserving its
@@ -498,6 +570,42 @@ mod tests {
             0.0
         ));
         assert!(approx(distance_to_segment(start, start, start), 0.0));
+    }
+
+    #[test]
+    fn rotate_point_uses_y_down_clockwise_angles() {
+        let center = Point::new(50.0, 10.0);
+        let rotated = rotate_point(Point::new(50.0, 50.0), center, -std::f64::consts::FRAC_PI_2);
+        assert!(approx(rotated.x, 90.0));
+        assert!(approx(rotated.y, 10.0));
+    }
+
+    #[test]
+    fn distance_to_rect_handles_inside_and_outside() {
+        let rect = Rect::from_xywh(0.0, 0.0, 10.0, 10.0);
+        assert!(approx(distance_to_rect(Point::new(5.0, 5.0), rect), 5.0));
+        assert!(approx(distance_to_rect(Point::new(0.0, 5.0), rect), 0.0));
+        assert!(approx(distance_to_rect(Point::new(13.0, 14.0), rect), 5.0));
+    }
+
+    #[test]
+    fn polygon_and_polyline_queries() {
+        let square = [
+            Point::new(0.0, 0.0),
+            Point::new(10.0, 0.0),
+            Point::new(10.0, 10.0),
+            Point::new(0.0, 10.0),
+        ];
+        assert!(point_in_polygon(Point::new(5.0, 5.0), &square));
+        assert!(!point_in_polygon(Point::new(15.0, 5.0), &square));
+        assert!(approx(
+            distance_to_polyline(Point::new(5.0, 3.0), &square, true),
+            3.0
+        ));
+        assert!(approx(
+            distance_to_polyline(Point::new(5.0, 3.0), &square, false),
+            3.0
+        ));
     }
 
     #[test]

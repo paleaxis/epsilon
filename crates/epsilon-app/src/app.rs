@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use eframe::egui::{self, Align, Layout, RichText};
 
 use epsilon_core::document::{
@@ -52,6 +54,9 @@ const DEFAULT_FONT_SIZE: f64 = 20.0;
 const DEFAULT_TEXT_WIDTH: f64 = 180.0;
 const MIN_TEXT_WIDTH_PIXELS: f64 = 40.0;
 
+/// Extra screen-space radius used when selecting strokes.
+const HIT_TOLERANCE_PIXELS: f64 = 6.0;
+
 /// High-level pointer interaction mode for the canvas.
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum PointerMode {
@@ -68,6 +73,12 @@ enum PointerMode {
     /// A freehand stroke being collected in world coordinates.
     Freehanding {
         last: Point,
+    },
+    /// A marquee drag with an additive-selection flag.
+    Selecting {
+        start: Point,
+        current: Point,
+        additive: bool,
     },
 }
 
@@ -173,6 +184,14 @@ fn draft_screen_rect(
     )
 }
 
+/// Projects a world-space rectangle into canvas screen space.
+fn world_rect_screen(canvas_rect: egui::Rect, viewport: &Viewport, rect: Rect) -> egui::Rect {
+    egui::Rect::from_two_pos(
+        world_to_screen_pos(canvas_rect, viewport, rect.min),
+        world_to_screen_pos(canvas_rect, viewport, rect.max),
+    )
+}
+
 fn document_color(color: DocumentColor) -> egui::Color32 {
     egui::Color32::from_rgba_unmultiplied(color.r, color.g, color.b, color.a)
 }
@@ -228,6 +247,8 @@ pub struct EpsilonApp {
     editing_text: Option<ElementId>,
     text_buffer: String,
     text_editor_needs_focus: bool,
+    /// Elements currently selected in the canvas.
+    selected: HashSet<ElementId>,
 }
 
 impl Default for EpsilonApp {
@@ -249,6 +270,7 @@ impl Default for EpsilonApp {
             editing_text: None,
             text_buffer: String::new(),
             text_editor_needs_focus: false,
+            selected: HashSet::new(),
         }
     }
 }
@@ -686,7 +708,9 @@ impl EpsilonApp {
             }
             // Drawing drags are finished by `update_drawing` after the
             // release event is visible to this frame.
-            PointerMode::Dragging { .. } | PointerMode::Freehanding { .. } => {}
+            PointerMode::Dragging { .. }
+            | PointerMode::Freehanding { .. }
+            | PointerMode::Selecting { .. } => {}
         }
 
         let panning = matches!(self.pointer_mode, PointerMode::Panning { .. });
@@ -793,6 +817,124 @@ impl EpsilonApp {
                 start: world,
                 current: world,
             };
+        }
+    }
+
+    /// Handles topmost click selection, shift-toggle and marquee selection.
+    fn update_selection(&mut self, ctx: &egui::Context, canvas_rect: egui::Rect) {
+        let pointer_pos = ctx.pointer_hover_pos();
+        let primary_down = ctx.input(|input| input.pointer.primary_down());
+        let primary_pressed = ctx.input(|input| input.pointer.primary_pressed());
+        let shift_down = ctx.input(|input| input.modifiers.shift);
+        let space_down = ctx.input(|input| input.key_down(egui::Key::Space));
+        let typing = ctx.egui_wants_keyboard_input();
+
+        if let PointerMode::Selecting {
+            start,
+            current,
+            additive,
+        } = self.pointer_mode
+        {
+            let current = pointer_pos
+                .map(|pos| self.screen_to_world(canvas_rect, pos))
+                .unwrap_or(current);
+            if primary_down {
+                self.pointer_mode = PointerMode::Selecting {
+                    start,
+                    current,
+                    additive,
+                };
+            } else {
+                let marquee = Rect::from_corners(start, current);
+                let hits: Vec<ElementId> = self
+                    .document
+                    .elements
+                    .iter()
+                    .filter(|element| element.intersects_rect(marquee))
+                    .map(|element| element.id)
+                    .collect();
+                if !additive {
+                    self.selected.clear();
+                }
+                self.selected.extend(hits);
+                self.pointer_mode = PointerMode::Idle;
+            }
+            return;
+        }
+
+        if self.tool != Tool::Select
+            || !primary_pressed
+            || space_down
+            || typing
+            || !pointer_pos.is_some_and(|pos| canvas_rect.contains(pos))
+        {
+            return;
+        }
+
+        let world = self.screen_to_world(canvas_rect, pointer_pos.expect("checked above"));
+        let tolerance = HIT_TOLERANCE_PIXELS / self.viewport.zoom;
+        let hit = self
+            .document
+            .paint_order()
+            .into_iter()
+            .rev()
+            .find(|element| element.hit_test(world, tolerance))
+            .map(|element| element.id);
+
+        if let Some(id) = hit {
+            self.toggle_selected(id, shift_down);
+            self.pointer_mode = PointerMode::Idle;
+        } else {
+            if !shift_down {
+                self.selected.clear();
+            }
+            self.pointer_mode = PointerMode::Selecting {
+                start: world,
+                current: world,
+                additive: shift_down,
+            };
+        }
+    }
+
+    fn toggle_selected(&mut self, id: ElementId, additive: bool) {
+        if additive {
+            if !self.selected.remove(&id) {
+                self.selected.insert(id);
+            }
+        } else {
+            self.selected.clear();
+            self.selected.insert(id);
+        }
+    }
+
+    /// Draws selection bounds and the active marquee.
+    fn paint_selection(
+        &self,
+        painter: &egui::Painter,
+        canvas_rect: egui::Rect,
+        accent: egui::Color32,
+    ) {
+        for id in &self.selected {
+            if let Some(element) = self.document.element(*id) {
+                let bounds = world_rect_screen(canvas_rect, &self.viewport, element.world_bounds());
+                painter.rect_stroke(
+                    bounds.expand(2.0),
+                    2.0,
+                    egui::Stroke::new(1.5, accent),
+                    egui::StrokeKind::Outside,
+                );
+            }
+        }
+
+        if let PointerMode::Selecting { start, current, .. } = self.pointer_mode {
+            let marquee = draft_screen_rect(canvas_rect, &self.viewport, start, current);
+            painter.rect_filled(marquee, 0.0, accent.gamma_multiply(0.12));
+            painter.rect_stroke(
+                marquee,
+                0.0,
+                egui::Stroke::new(1.0, accent),
+                egui::StrokeKind::Inside,
+            );
         }
     }
 
@@ -1248,6 +1390,7 @@ impl EpsilonApp {
                     self.update_pan(ui.ctx(), rect);
                     self.update_zoom(ui.ctx(), rect);
                     self.update_drawing(ui.ctx(), rect);
+                    self.update_selection(ui.ctx(), rect);
                 }
 
                 if self.grid_enabled {
@@ -1308,8 +1451,10 @@ impl EpsilonApp {
                 }
 
                 self.paint_document(ui.painter(), rect);
+                let accent = ui.visuals().hyperlink_color;
                 let shift_down = ui.ctx().input(|input| input.modifiers.shift);
-                self.paint_draft(ui.painter(), rect, ui.visuals().hyperlink_color, shift_down);
+                self.paint_draft(ui.painter(), rect, accent, shift_down);
+                self.paint_selection(ui.painter(), rect, accent);
 
                 // Prove the coordinate pipeline: the world origin is projected
                 // through the viewport and marked on screen.
@@ -1517,6 +1662,25 @@ mod tests {
         assert!(ctx.style_of(egui::Theme::Dark).visuals.dark_mode);
     }
 
+    fn run_app_frame(
+        app: &mut EpsilonApp,
+        ctx: &egui::Context,
+        screen: egui::Rect,
+        events: Vec<egui::Event>,
+    ) {
+        let output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(screen),
+                events,
+                ..Default::default()
+            },
+            |ui| {
+                let _ = app.show_shell(ui);
+            },
+        );
+        output.drop_without_applying_deltas();
+    }
+
     fn drag_shape_on_canvas(tool: Tool) -> EpsilonApp {
         let ctx = egui::Context::default();
         theme::apply(&ctx, Theme::Dark);
@@ -1669,6 +1833,96 @@ mod tests {
             drawing_end(ElementKind::Arrow, start, end, true),
             constrained
         );
+    }
+
+    #[test]
+    fn selection_click_picks_topmost_and_shift_toggles() {
+        let ctx = egui::Context::default();
+        theme::apply(&ctx, Theme::Dark);
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1000.0, 700.0));
+        let mut app = EpsilonApp::default();
+        let mut first_element = Element::new(ElementKind::Rectangle, 0.0, 0.0, 100.0, 100.0);
+        first_element.style.fill = DocumentColor::WHITE;
+        let mut second_element = Element::new(ElementKind::Rectangle, 0.0, 0.0, 100.0, 100.0);
+        second_element.style.fill = DocumentColor::WHITE;
+        let first = app.document.add(first_element);
+        let second = app.document.add(second_element);
+
+        run_app_frame(&mut app, &ctx, screen, Vec::new());
+        let point = app.canvas_rect.min + egui::vec2(50.0, 50.0);
+        let press = |modifiers: egui::Modifiers| {
+            vec![
+                egui::Event::PointerMoved(point),
+                egui::Event::PointerButton {
+                    pos: point,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers,
+                },
+            ]
+        };
+
+        run_app_frame(&mut app, &ctx, screen, press(egui::Modifiers::NONE));
+        assert_eq!(app.selected.len(), 1);
+        assert!(app.selected.contains(&second));
+        assert!(!app.selected.contains(&first));
+
+        let release = vec![egui::Event::PointerButton {
+            pos: point,
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: egui::Modifiers::NONE,
+        }];
+        run_app_frame(&mut app, &ctx, screen, release);
+
+        app.toggle_selected(second, true);
+        assert!(app.selected.is_empty());
+        app.toggle_selected(first, true);
+        assert!(app.selected.contains(&first));
+    }
+
+    #[test]
+    fn marquee_selects_intersecting_elements() {
+        let ctx = egui::Context::default();
+        theme::apply(&ctx, Theme::Dark);
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1000.0, 700.0));
+        let mut app = EpsilonApp::default();
+        let id = app
+            .document
+            .add(Element::new(ElementKind::Rectangle, 0.0, 0.0, 100.0, 100.0));
+
+        run_app_frame(&mut app, &ctx, screen, Vec::new());
+        let start = app.canvas_rect.min + egui::vec2(200.0, 200.0);
+        let end = app.canvas_rect.min + egui::vec2(50.0, 50.0);
+        run_app_frame(
+            &mut app,
+            &ctx,
+            screen,
+            vec![
+                egui::Event::PointerMoved(start),
+                egui::Event::PointerButton {
+                    pos: start,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ],
+        );
+        run_app_frame(&mut app, &ctx, screen, vec![egui::Event::PointerMoved(end)]);
+        run_app_frame(
+            &mut app,
+            &ctx,
+            screen,
+            vec![egui::Event::PointerButton {
+                pos: end,
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: egui::Modifiers::NONE,
+            }],
+        );
+
+        assert_eq!(app.selected.len(), 1);
+        assert!(app.selected.contains(&id));
     }
 
     #[test]

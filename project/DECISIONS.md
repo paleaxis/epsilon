@@ -557,3 +557,21 @@ stores its world-space height.
 **Consequences.** Editing uses egui's native text behavior and remains visually
 anchored to the element. Text layout is measured in the app boundary while the
 document stays UI-independent, and deleted empty text leaves no placeholder.
+
+---
+
+## D-031 — Hit testing rotates the query into local element space (2026-11-23)
+
+**Context.** Task 3.9 needs one hit-test implementation for every element kind,
+including rotated elements, plus marquee intersection and stroke tolerance.
+
+**Decision.** `Element::hit_test` rotates the world query point around the
+element center by `-angle`, then tests the unrotated bounds/shape. Transparent
+fills only hit near the stroke; filled shapes also hit inside. Linear and
+freehand elements use point-to-segment distance. Marquee intersection uses
+rotation-expanded world bounds. The app converts a 6px selection tolerance to
+world units at the current zoom.
+
+**Consequences.** Rotation handling is shared and does not require duplicating
+shape math for transformed coordinates. Selection feels consistent across zoom
+levels, and filled versus outlined behavior is explicit and testable.

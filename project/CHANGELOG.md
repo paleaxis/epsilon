@@ -4,6 +4,12 @@ Notable changes, newest first. Version sections are added at release time.
 
 ## [Unreleased]
 
+### Added — 2026-11-23 (task 3.9)
+
+- Selection tool with topmost hit testing, shift-toggle, marquee selection and
+  selection outlines.
+- Rotation-aware element hit tests and marquee bounds in core.
+
 ### Added — 2026-11-23 (task 3.8)
 
 - Text tool with click/drag placement, multiline in-canvas editing, wrapped

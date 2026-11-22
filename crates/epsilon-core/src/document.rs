@@ -8,7 +8,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use serde::{Deserialize, Serialize};
 
-use crate::geometry::{Point, Rect};
+use crate::geometry::{
+    Point, Rect, distance_to_polyline, distance_to_rect, distance_to_segment, point_in_polygon,
+    rotate_point,
+};
 use crate::grid;
 
 fn default_font_size() -> f64 {
@@ -249,6 +252,98 @@ impl Element {
         element.points = vec![start, end];
         element
     }
+
+    /// Unrotated bounds in the element's local frame.
+    pub fn bounds(&self) -> Rect {
+        Rect::from_xywh(self.x, self.y, self.width, self.height)
+    }
+
+    /// Rotates a world point into this element's unrotated local frame.
+    pub fn local_point(&self, point: Point) -> Point {
+        rotate_point(point, self.bounds().center(), -self.angle)
+    }
+
+    /// Axis-aligned world bounds after applying the element rotation.
+    pub fn world_bounds(&self) -> Rect {
+        let center = self.bounds().center();
+        if !self.points.is_empty() {
+            return Rect::from_points(
+                self.points
+                    .iter()
+                    .map(|point| rotate_point(*point, center, self.angle)),
+            )
+            .unwrap_or_else(|| self.bounds());
+        }
+
+        let bounds = self.bounds();
+        Rect::from_points(
+            [
+                bounds.min,
+                Point::new(bounds.max.x, bounds.min.y),
+                bounds.max,
+                Point::new(bounds.min.x, bounds.max.y),
+            ]
+            .into_iter()
+            .map(|point| rotate_point(point, center, self.angle)),
+        )
+        .unwrap_or(bounds)
+    }
+
+    /// Hit test in world space, with rotation and a caller-supplied tolerance.
+    /// Transparent fills only respond near their stroke; filled shapes respond
+    /// anywhere inside.
+    pub fn hit_test(&self, point: Point, tolerance: f64) -> bool {
+        let local = self.local_point(point);
+        let rect = self.bounds();
+        let tolerance = tolerance.max(0.0);
+        let outline_tolerance = tolerance + self.style.stroke_width * 0.5;
+        let filled = self.style.fill.a > 0;
+
+        match self.kind {
+            ElementKind::Rectangle => {
+                (filled && rect.contains(local))
+                    || distance_to_rect(local, rect) <= outline_tolerance
+            }
+            ElementKind::Ellipse => {
+                let rx = self.width * 0.5;
+                let ry = self.height * 0.5;
+                if rx <= f64::EPSILON || ry <= f64::EPSILON {
+                    return false;
+                }
+                let center = rect.center();
+                let normalized = (((local.x - center.x) / rx).powi(2)
+                    + ((local.y - center.y) / ry).powi(2))
+                .sqrt();
+                if filled && normalized <= 1.0 {
+                    true
+                } else {
+                    (normalized - 1.0).abs() * rx.min(ry) <= outline_tolerance
+                }
+            }
+            ElementKind::Diamond => {
+                let points = rect.diamond_points();
+                (filled && point_in_polygon(local, &points))
+                    || distance_to_polyline(local, &points, true) <= outline_tolerance
+            }
+            ElementKind::Line | ElementKind::Arrow => {
+                if let [start, end] = self.points.as_slice() {
+                    distance_to_segment(local, *start, *end) <= outline_tolerance
+                } else {
+                    false
+                }
+            }
+            ElementKind::Freehand => {
+                !self.points.is_empty()
+                    && distance_to_polyline(local, &self.points, false) <= outline_tolerance
+            }
+            ElementKind::Text => rect.expand(tolerance).contains(local),
+        }
+    }
+
+    /// Marquee intersection using the rotated world bounds.
+    pub fn intersects_rect(&self, rect: Rect) -> bool {
+        self.world_bounds().intersects(&rect)
+    }
 }
 
 /// A complete document: schema version, canvas settings and ordered elements.
@@ -455,6 +550,68 @@ mod tests {
         assert_eq!(element.font_size, 18.0);
         assert_eq!(element.text_align, TextAlign::Left);
         assert!(element.text.is_empty());
+    }
+
+    #[test]
+    fn hit_test_handles_transparent_fills_and_rotation() {
+        let mut rectangle = Element::with_id(
+            ElementId::new(1),
+            ElementKind::Rectangle,
+            0.0,
+            0.0,
+            100.0,
+            20.0,
+        );
+        assert!(!rectangle.hit_test(Point::new(50.0, 10.0), 0.1));
+        assert!(rectangle.hit_test(Point::new(0.0, 10.0), 0.1));
+
+        rectangle.style.fill = Color::WHITE;
+        assert!(rectangle.hit_test(Point::new(50.0, 10.0), 0.1));
+
+        rectangle.style.fill = Color::WHITE;
+        rectangle.angle = std::f64::consts::FRAC_PI_2;
+        assert!(rectangle.hit_test(Point::new(50.0, 50.0), 0.1));
+        assert!(!rectangle.hit_test(Point::new(10.0, 50.0), 0.1));
+        assert!(
+            rectangle
+                .world_bounds()
+                .intersects(&Rect::from_xywh(40.0, 30.0, 20.0, 20.0))
+        );
+    }
+
+    #[test]
+    fn line_and_freehand_hit_tests_use_stroke_distance() {
+        let line = Element::line(Point::new(0.0, 0.0), Point::new(100.0, 0.0));
+        assert!(line.hit_test(Point::new(50.0, 1.0), 0.0));
+        assert!(!line.hit_test(Point::new(50.0, 5.0), 0.0));
+
+        let freehand = Element::freehand(vec![
+            Point::new(0.0, 0.0),
+            Point::new(20.0, 20.0),
+            Point::new(40.0, 0.0),
+        ])
+        .expect("polyline");
+        assert!(freehand.hit_test(Point::new(10.0, 10.0), 1.0));
+        assert!(!freehand.hit_test(Point::new(10.0, 20.0), 1.0));
+    }
+
+    #[test]
+    fn diamond_fill_and_text_bounds_are_hit_testable() {
+        let mut diamond = Element::with_id(
+            ElementId::new(1),
+            ElementKind::Diamond,
+            0.0,
+            0.0,
+            100.0,
+            50.0,
+        );
+        assert!(!diamond.hit_test(Point::new(50.0, 25.0), 0.1));
+        diamond.style.fill = Color::WHITE;
+        assert!(diamond.hit_test(Point::new(50.0, 25.0), 0.1));
+
+        let text = Element::text(0.0, 0.0, 100.0, 20.0);
+        assert!(text.hit_test(Point::new(50.0, 10.0), 1.0));
+        assert!(!text.hit_test(Point::new(150.0, 10.0), 1.0));
     }
 
     #[test]

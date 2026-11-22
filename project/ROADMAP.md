@@ -339,13 +339,20 @@ the element color, alignment and wrap width. Headless tests cover placement,
 empty discard, measured commit and Escape; live visual editing was not possible
 in this environment.
 
-### [ ] 3.9 — Selection and hit testing
+### [x] 3.9 — Selection and hit testing
 
 Click-to-select topmost element, stroke/fill hit tolerance, rotated-element hit
 tests, shift-click toggle, marquee selection.
 
 Acceptance: hit-test unit tests for each shape incl. rotation; marquee selects
 intersecting elements.
+
+Completed 2026-11-23: the core element now provides rotation-aware hit tests,
+rotated world bounds and marquee intersection. Rectangle, ellipse, diamond,
+line, arrow, freehand and text tests cover stroke tolerance, transparent versus
+filled interiors and rotation. The Select tool picks the topmost hit, supports
+additive toggling and captures an intersecting marquee, with selection outlines
+painted in screen space.
 
 ### [ ] 3.10 — Move and resize
 
