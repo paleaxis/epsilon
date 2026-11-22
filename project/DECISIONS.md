@@ -593,3 +593,22 @@ to world units. Shift preserves corner aspect, Alt mirrors around the center.
 **Consequences.** Continuous drags cannot accumulate floating-point drift, all
 selected elements share one transform, and handle size/hit areas stay usable
 across 10%–1000% zoom. Rotation remains a separate transform in task 3.11.
+
+---
+
+## D-033 — Rotation snapshots transform from the collective center (2026-11-23)
+
+**Context.** Task 3.11 needs multi-element rotation with Shift snapping, plus
+usable handles after a selection has been rotated.
+
+**Decision.** A rotation drag captures the selected elements and the center of
+their combined world bounds. Each frame computes an angle delta from the drag
+start, optionally snaps it to 15°, and applies `rotated_around` to every
+snapshot. Closed shapes accumulate `angle`; linear point geometry is rotated in
+world space and keeps `angle = 0`. Selection handles continue to use the
+rotation-expanded world bounds in screen space.
+
+**Consequences.** Multiple elements rotate around one common pivot, Shift gives
+predictable angles, and handle placement remains axis-aligned and usable.
+Rotated closed shapes render as projected polygons; text rotation rendering is
+still axis-aligned and can be revisited when text layout is enhanced.

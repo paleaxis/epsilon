@@ -374,6 +374,15 @@ pub fn resize_rect(
     result
 }
 
+/// Snaps an angle in radians to the nearest multiple of `step_radians`.
+/// Non-positive or non-finite steps return the input unchanged.
+pub fn snap_angle(angle: f64, step_radians: f64) -> f64 {
+    if !step_radians.is_finite() || step_radians <= 0.0 {
+        return angle;
+    }
+    (angle / step_radians).round() * step_radians
+}
+
 /// Rotates `point` around `center` by `angle` radians. Positive angles are
 /// clockwise in the y-down world convention.
 pub fn rotate_point(point: Point, center: Point, angle: f64) -> Point {
@@ -771,6 +780,15 @@ mod tests {
         );
         assert!(approx(uniform.width() / uniform.height(), 2.0));
         assert!(approx(uniform.width(), 200.0));
+    }
+
+    #[test]
+    fn snap_angle_rounds_to_steps() {
+        let step = std::f64::consts::PI / 12.0;
+        assert!(approx(snap_angle(0.01, step), 0.0));
+        assert!(approx(snap_angle(step * 2.4, step), step * 2.0));
+        assert!(approx(snap_angle(-step * 1.6, step), -step * 2.0));
+        assert_eq!(snap_angle(0.3, 0.0), 0.3);
     }
 
     #[test]

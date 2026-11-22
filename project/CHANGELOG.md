@@ -4,6 +4,12 @@ Notable changes, newest first. Version sections are added at release time.
 
 ## [Unreleased]
 
+### Added — 2026-11-23 (task 3.11)
+
+- Rotation handle with 15-degree Shift snapping and collective multi-element
+  rotation.
+- Rotated polygon rendering and angle-aware selection bounds.
+
 ### Added — 2026-11-23 (task 3.10)
 
 - Move and eight-handle resize for selections, including multi-element

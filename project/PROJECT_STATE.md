@@ -2,8 +2,8 @@
 
 Last updated: 2026-11-23
 Current stage: **Stage 3 — Drawing engine**
-Last completed task: **3.10 — Move and resize**
-Next task: **3.11 — Rotation**
+Last completed task: **3.11 — Rotation**
+Next task: **3.12 — Styling system**
 
 ## Status
 
@@ -22,7 +22,7 @@ AGENTS.md                   permanent rules
 README.md                   build/run overview
 project/                    STATE, ROADMAP, DECISIONS, CHANGELOG
 crates/epsilon-core/        UI-independent engine (no egui dependency)
-  src/geometry.rs           Point, Rect, shapes, simplify, resize + 26 tests
+  src/geometry.rs           Point, Rect, shapes, transforms + 28 tests
   src/document.rs           schema-versioned document, shapes, text, paint order
 crates/epsilon-app/         eframe desktop shell
   src/main.rs               native entry point (persist_window enabled)
@@ -40,7 +40,7 @@ Working UI actions:
 | View menu | "Dark mode" checkbox, applied immediately |
 | Help menu | About Epsilon (dialog) |
 | Top toolbar | Wordmark, document title, theme checkbox, About button, version |
-| Canvas | Shape tools draw; Select picks/toggles/marquees, moves and resizes; text overlays edit in place; middle/space/hand drag pans; wheel zooms |
+| Canvas | Shape tools draw; Select picks/toggles/marquees, moves, resizes and rotates; text overlays edit in place; middle/space/hand drag pans; wheel zooms |
 | Properties | Show-grid toggle and panel hide control |
 
 Only working actions are listed; the Edit menu is intentionally absent until
@@ -70,19 +70,20 @@ Other shell behavior:
   `Context::egui_wants_keyboard_input()`; `cc.storage` is a field.
 - Remote: `origin git@github.com/paleaxis/epsilon.git`, branch `main`.
 
-## Verified commands and results (task 3.10)
+## Verified commands and results (task 3.11)
 
 | Command | Result |
 | --- | --- |
 | `cargo fmt --all -- --check` | exit 0 |
 | `cargo clippy --workspace --all-targets -- -D warnings` | exit 0 |
-| `cargo test --workspace` | **104 passed, 0 failed** (50 app, 54 core) |
+| `cargo test --workspace` | **108 passed, 0 failed** (52 app, 56 core) |
 | `cargo build --workspace` | success, no warnings |
 | `timeout 8 ./target/debug/epsilon` | exit 124 (alive, no stderr) |
 
-Task 3.10 tests cover resize bounds, aspect and center modes, scaling round
-trips, multi-element move/resize and handle placement. The suite also retains
-shell, persistence, viewport, grid, document and earlier shape coverage.
+Task 3.11 tests cover angle snapping, element rotation, collective-center
+rotation and retained handles after rotating a selection. The suite also
+retains shell, persistence, viewport, grid, document and earlier shape
+coverage.
 
 Native launch was verified by process liveness. Menu clicks and keyboard
 navigation were not automated or visually reviewed; only the action functions
@@ -112,6 +113,8 @@ behind them are tested.
   marquee selection with screen-space outlines.
 - Move and eight-handle resize with multi-element transforms, Shift aspect lock,
   Alt-from-center and minimum size enforcement.
+- Rotation handle with Shift 15-degree snapping, collective-center multi-element
+  rotation and rotated polygon rendering.
 - Persisted theme/tool; eframe-persisted window geometry and panel widths.
 - Tool palette with shortcuts, painted icons and accessible names.
 - Dark/light themes with central palette and contrast tests.
@@ -145,8 +148,8 @@ automation allowed). Items requiring a human reviewer:
 - Edit menu and formatting actions are not implemented (Stage 4); File has only
   Quit until document I/O (Stage 5).
 - Shell polish and manual verification pass remains (1.9).
-- Rotation, styling, rough rendering and properties binding are still pending
-  (Stage 3.11+).
+- Styling, rough rendering and properties binding are still pending
+  (Stage 3.12+).
 - No CI; local verification only. No visual/screenshot review performed.
 - Window/panel restore relies on eframe/egui and was not re-measured under niri.
 - Project license: GPL-3.0 (`LICENSE`); manifests declare `GPL-3.0-only`.
@@ -155,7 +158,7 @@ automation allowed). Items requiring a human reviewer:
 
 1. Read `AGENTS.md`, `project/ROADMAP.md`, this file, `project/DECISIONS.md`.
 2. `git status` must be clean; run `cargo test --workspace` for the baseline.
-3. Implement only task **3.11** (rotation).
+3. Implement only task **3.12** (styling system).
 4. Verify format, clippy, tests, build, and `timeout 8 ./target/debug/epsilon`.
 5. Update this file, `ROADMAP.md`, `CHANGELOG.md`, then commit and push.
 

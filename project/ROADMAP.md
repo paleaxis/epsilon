@@ -369,12 +369,19 @@ recomputed from drag-start snapshots each frame to avoid accumulated drift.
 Core tests cover resize bounds and scaling round trips, and app tests cover
 multi-element move, multi-element resize and handle placement.
 
-### [ ] 3.11 — Rotation
+### [x] 3.11 — Rotation
 
 Rotation handle, angle-aware bounds/hit testing, shift snapping to 15°,
 multi-element rotation around collective center.
 
 Acceptance: rotation tests; handles remain usable for rotated selections.
+
+Completed 2026-11-23: selections expose a rotation handle above their bounds,
+with Shift snapping to 15°. Shape rotations accumulate `angle`, linear point
+geometry rotates in world space, and multi-element rotations use the collective
+bounds center. Rotated shapes render from projected rotated polygons; rotated
+selections keep eight usable screen-space resize handles. Core and app tests
+cover angle snapping, collective rotation and rotated handle bounds.
 
 ### [ ] 3.12 — Styling system
 

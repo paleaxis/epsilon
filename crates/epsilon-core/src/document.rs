@@ -334,6 +334,37 @@ impl Element {
         scaled
     }
 
+    /// Returns a copy rotated around `pivot` by `delta` radians.
+    ///
+    /// Closed shapes keep their local bounds and accumulate `angle`; linear
+    /// and freehand points are rotated directly so their world-space storage
+    /// stays authoritative.
+    pub fn rotated_around(&self, pivot: Point, delta: f64) -> Self {
+        let mut rotated = self.clone();
+        if self.points.is_empty() {
+            let center = rotate_point(self.bounds().center(), pivot, delta);
+            rotated.x = center.x - self.width * 0.5;
+            rotated.y = center.y - self.height * 0.5;
+            rotated.angle += delta;
+            return rotated;
+        }
+
+        let old_center = self.bounds().center();
+        rotated.points = self
+            .points
+            .iter()
+            .map(|point| rotate_point(rotate_point(*point, old_center, self.angle), pivot, delta))
+            .collect();
+        if let Some(bounds) = Rect::from_points(rotated.points.iter().copied()) {
+            rotated.x = bounds.min.x;
+            rotated.y = bounds.min.y;
+            rotated.width = bounds.width();
+            rotated.height = bounds.height();
+        }
+        rotated.angle = 0.0;
+        rotated
+    }
+
     /// Hit test in world space, with rotation and a caller-supplied tolerance.
     /// Transparent fills only respond near their stroke; filled shapes respond
     /// anywhere inside.
@@ -687,6 +718,22 @@ mod tests {
         assert!((restored.width - text.width).abs() < 1e-9);
         assert!((restored.height - text.height).abs() < 1e-9);
         assert!((restored.font_size - text.font_size).abs() < 1e-9);
+    }
+
+    #[test]
+    fn rotation_accumulates_shape_angles_and_rotates_points() {
+        let rectangle = Element::new(ElementKind::Rectangle, 0.0, 0.0, 100.0, 50.0);
+        let rotated = rectangle.rotated_around(Point::new(50.0, 25.0), std::f64::consts::FRAC_PI_2);
+        assert!((rotated.angle - std::f64::consts::FRAC_PI_2).abs() < 1e-9);
+        assert!((rotated.x - 0.0).abs() < 1e-9);
+        assert!((rotated.y - 0.0).abs() < 1e-9);
+
+        let line = Element::line(Point::new(0.0, 0.0), Point::new(10.0, 0.0));
+        let rotated = line.rotated_around(Point::new(0.0, 0.0), std::f64::consts::FRAC_PI_2);
+        assert_eq!(rotated.angle, 0.0);
+        assert!((rotated.points[1].x - 0.0).abs() < 1e-9);
+        assert!((rotated.points[1].y - 10.0).abs() < 1e-9);
+        assert!(rotated.height >= 10.0);
     }
 
     #[test]

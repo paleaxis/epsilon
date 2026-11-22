@@ -6,8 +6,8 @@ use epsilon_core::document::{
     Color as DocumentColor, Document, Element, ElementId, ElementKind, TextAlign,
 };
 use epsilon_core::geometry::{
-    Point, Rect, ResizeHandle, arrowhead_points, constrain_angle, resize_rect, simplify_polyline,
-    smooth_polyline,
+    Point, Rect, ResizeHandle, arrowhead_points, constrain_angle, resize_rect, rotate_point,
+    simplify_polyline, smooth_polyline, snap_angle,
 };
 use epsilon_core::grid;
 use epsilon_core::viewport::Viewport;
@@ -60,6 +60,8 @@ const HIT_TOLERANCE_PIXELS: f64 = 6.0;
 const HANDLE_SIZE_PIXELS: f32 = 8.0;
 const HANDLE_HIT_RADIUS_PIXELS: f32 = 7.0;
 const MIN_ELEMENT_PIXELS: f64 = 8.0;
+const ROTATION_HANDLE_OFFSET_PIXELS: f32 = 24.0;
+const ROTATION_HANDLE_RADIUS_PIXELS: f32 = 5.0;
 
 /// High-level pointer interaction mode for the canvas.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -93,6 +95,8 @@ enum PointerMode {
     Resizing {
         handle: ResizeHandle,
     },
+    /// Rotating the current selection around its collective center.
+    Rotating,
 }
 
 /// Element kind created by a drag with the given tool.
@@ -163,6 +167,39 @@ fn arrowhead_screen_points(
     )
 }
 
+/// World-space point after applying the element's rotation around its center.
+fn element_world_point(element: &Element, point: Point) -> Point {
+    rotate_point(point, element.bounds().center(), element.angle)
+}
+
+fn rotated_shape_screen_points(
+    canvas_rect: egui::Rect,
+    viewport: &Viewport,
+    element: &Element,
+    local_points: impl IntoIterator<Item = Point>,
+) -> Vec<egui::Pos2> {
+    local_points
+        .into_iter()
+        .map(|point| {
+            world_to_screen_pos(canvas_rect, viewport, element_world_point(element, point))
+        })
+        .collect()
+}
+
+fn ellipse_local_points(bounds: Rect) -> Vec<Point> {
+    let center = bounds.center();
+    let radius = bounds.size() * 0.5;
+    (0..48)
+        .map(|index| {
+            let angle = std::f64::consts::TAU * index as f64 / 48.0;
+            Point::new(
+                center.x + angle.cos() * radius.x,
+                center.y + angle.sin() * radius.y,
+            )
+        })
+        .collect()
+}
+
 /// Projects an element's inscribed diamond into screen space.
 fn diamond_screen_points(
     canvas_rect: egui::Rect,
@@ -223,6 +260,13 @@ fn handle_screen_positions(bounds: egui::Rect) -> [(ResizeHandle, egui::Pos2); 8
         (ResizeHandle::SouthWest, egui::pos2(left, bottom)),
         (ResizeHandle::West, egui::pos2(left, center_y)),
     ]
+}
+
+fn rotation_handle_position(bounds: egui::Rect) -> egui::Pos2 {
+    egui::pos2(
+        bounds.center().x,
+        bounds.top() - ROTATION_HANDLE_OFFSET_PIXELS,
+    )
 }
 
 fn document_color(color: DocumentColor) -> egui::Color32 {
@@ -286,6 +330,8 @@ pub struct EpsilonApp {
     /// origin instead of accumulating rounding drift.
     transform_original: Vec<Element>,
     resize_start_bounds: Rect,
+    rotation_center: Point,
+    rotation_start_angle: f64,
 }
 
 impl Default for EpsilonApp {
@@ -310,6 +356,8 @@ impl Default for EpsilonApp {
             selected: HashSet::new(),
             transform_original: Vec::new(),
             resize_start_bounds: Rect::default(),
+            rotation_center: Point::ZERO,
+            rotation_start_angle: 0.0,
         }
     }
 }
@@ -751,7 +799,8 @@ impl EpsilonApp {
             | PointerMode::Freehanding { .. }
             | PointerMode::Selecting { .. }
             | PointerMode::Moving { .. }
-            | PointerMode::Resizing { .. } => {}
+            | PointerMode::Resizing { .. }
+            | PointerMode::Rotating => {}
         }
 
         let panning = matches!(self.pointer_mode, PointerMode::Panning { .. });
@@ -904,6 +953,27 @@ impl EpsilonApp {
         }
     }
 
+    fn apply_rotation(&mut self, delta: f64) {
+        for original in &self.transform_original {
+            if let Some(element) = self
+                .document
+                .elements
+                .iter_mut()
+                .find(|element| element.id == original.id)
+            {
+                *element = original.rotated_around(self.rotation_center, delta);
+            }
+        }
+    }
+
+    fn rotation_handle_at(&self, pointer: egui::Pos2, canvas_rect: egui::Rect) -> bool {
+        let Some(bounds) = self.selection_bounds() else {
+            return false;
+        };
+        let screen = world_rect_screen(canvas_rect, &self.viewport, bounds);
+        rotation_handle_position(screen).distance(pointer) <= HANDLE_HIT_RADIUS_PIXELS
+    }
+
     fn apply_resize_to(&mut self, bounds: Rect) {
         for original in &self.transform_original {
             if let Some(element) = self
@@ -952,6 +1022,24 @@ impl EpsilonApp {
                         self.apply_resize_to(bounds);
                     }
                     self.pointer_mode = PointerMode::Resizing { handle };
+                } else {
+                    self.pointer_mode = PointerMode::Idle;
+                    self.transform_original.clear();
+                }
+            }
+            PointerMode::Rotating => {
+                if primary_down {
+                    if let Some(pointer) = pointer {
+                        let world = self.screen_to_world(canvas_rect, pointer);
+                        let offset = world - self.rotation_center;
+                        let angle = offset.y.atan2(offset.x);
+                        let mut delta = angle - self.rotation_start_angle;
+                        if shift_down {
+                            delta = snap_angle(delta, LINE_ANGLE_STEP);
+                        }
+                        self.apply_rotation(delta);
+                    }
+                    self.pointer_mode = PointerMode::Rotating;
                 } else {
                     self.pointer_mode = PointerMode::Idle;
                     self.transform_original.clear();
@@ -1013,6 +1101,18 @@ impl EpsilonApp {
         }
 
         let pointer = pointer_pos.expect("checked above");
+        if self.rotation_handle_at(pointer, canvas_rect)
+            && let Some(bounds) = self.selection_bounds()
+        {
+            self.transform_original = self.selected_snapshots();
+            self.rotation_center = bounds.center();
+            let world = self.screen_to_world(canvas_rect, pointer);
+            let offset = world - self.rotation_center;
+            self.rotation_start_angle = offset.y.atan2(offset.x);
+            self.pointer_mode = PointerMode::Rotating;
+            return;
+        }
+
         if let Some(handle) = self.resize_handle_at(pointer, canvas_rect)
             && let Some(bounds) = self.selection_bounds()
         {
@@ -1096,6 +1196,10 @@ impl EpsilonApp {
                     egui::Rect::from_center_size(position, egui::Vec2::splat(HANDLE_SIZE_PIXELS));
                 painter.rect_filled(handle, 1.0, accent);
             }
+            let top_center = egui::pos2(screen.center().x, screen.top());
+            let rotation = rotation_handle_position(screen);
+            painter.line_segment([top_center, rotation], egui::Stroke::new(1.0, accent));
+            painter.circle_filled(rotation, ROTATION_HANDLE_RADIUS_PIXELS, accent);
         }
 
         if let PointerMode::Selecting { start, current, .. } = self.pointer_mode {
@@ -1267,23 +1371,72 @@ impl EpsilonApp {
 
             match element.kind {
                 ElementKind::Rectangle => {
-                    if fill.a() > 0 {
-                        painter.rect_filled(rect, 0.0, fill);
+                    if element.angle.abs() <= 1e-9 {
+                        if fill.a() > 0 {
+                            painter.rect_filled(rect, 0.0, fill);
+                        }
+                        painter.rect_stroke(rect, 0.0, stroke, egui::StrokeKind::Inside);
+                    } else {
+                        let bounds =
+                            Rect::from_xywh(element.x, element.y, element.width, element.height);
+                        let corners = [
+                            bounds.min,
+                            Point::new(bounds.max.x, bounds.min.y),
+                            bounds.max,
+                            Point::new(bounds.min.x, bounds.max.y),
+                        ];
+                        let points = rotated_shape_screen_points(
+                            canvas_rect,
+                            &self.viewport,
+                            element,
+                            corners,
+                        );
+                        if fill.a() > 0 {
+                            painter.add(egui::Shape::convex_polygon(
+                                points.clone(),
+                                fill,
+                                egui::Stroke::NONE,
+                            ));
+                        }
+                        painter.add(egui::Shape::closed_line(points, stroke));
                     }
-                    painter.rect_stroke(rect, 0.0, stroke, egui::StrokeKind::Inside);
                 }
                 ElementKind::Ellipse => {
-                    let center = rect.center();
-                    let radius = rect.size() / 2.0;
-                    if fill.a() > 0 {
-                        painter.add(egui::Shape::ellipse_filled(center, radius, fill));
+                    if element.angle.abs() <= 1e-9 {
+                        let center = rect.center();
+                        let radius = rect.size() / 2.0;
+                        if fill.a() > 0 {
+                            painter.add(egui::Shape::ellipse_filled(center, radius, fill));
+                        }
+                        painter.add(egui::Shape::ellipse_stroke(center, radius, stroke));
+                    } else {
+                        let bounds =
+                            Rect::from_xywh(element.x, element.y, element.width, element.height);
+                        let points = rotated_shape_screen_points(
+                            canvas_rect,
+                            &self.viewport,
+                            element,
+                            ellipse_local_points(bounds),
+                        );
+                        if fill.a() > 0 {
+                            painter.add(egui::Shape::convex_polygon(
+                                points.clone(),
+                                fill,
+                                egui::Stroke::NONE,
+                            ));
+                        }
+                        painter.add(egui::Shape::closed_line(points, stroke));
                     }
-                    painter.add(egui::Shape::ellipse_stroke(center, radius, stroke));
                 }
                 ElementKind::Diamond => {
                     let bounds =
                         Rect::from_xywh(element.x, element.y, element.width, element.height);
-                    let points = diamond_screen_points(canvas_rect, &self.viewport, bounds);
+                    let points = rotated_shape_screen_points(
+                        canvas_rect,
+                        &self.viewport,
+                        element,
+                        bounds.diamond_points(),
+                    );
                     if fill.a() > 0 {
                         painter.add(egui::Shape::convex_polygon(
                             points.clone(),
@@ -1297,8 +1450,16 @@ impl EpsilonApp {
                     if let [start, end] = element.points.as_slice() {
                         painter.line_segment(
                             [
-                                world_to_screen_pos(canvas_rect, &self.viewport, *start),
-                                world_to_screen_pos(canvas_rect, &self.viewport, *end),
+                                world_to_screen_pos(
+                                    canvas_rect,
+                                    &self.viewport,
+                                    element_world_point(element, *start),
+                                ),
+                                world_to_screen_pos(
+                                    canvas_rect,
+                                    &self.viewport,
+                                    element_world_point(element, *end),
+                                ),
                             ],
                             stroke,
                         );
@@ -1306,15 +1467,17 @@ impl EpsilonApp {
                 }
                 ElementKind::Arrow => {
                     if let [start, end] = element.points.as_slice() {
+                        let start = element_world_point(element, *start);
+                        let end = element_world_point(element, *end);
                         painter.line_segment(
                             [
-                                world_to_screen_pos(canvas_rect, &self.viewport, *start),
-                                world_to_screen_pos(canvas_rect, &self.viewport, *end),
+                                world_to_screen_pos(canvas_rect, &self.viewport, start),
+                                world_to_screen_pos(canvas_rect, &self.viewport, end),
                             ],
                             stroke,
                         );
                         if let Some(head) =
-                            arrowhead_screen_points(canvas_rect, &self.viewport, *start, *end)
+                            arrowhead_screen_points(canvas_rect, &self.viewport, start, end)
                         {
                             painter.add(egui::Shape::convex_polygon(
                                 head,
@@ -1328,7 +1491,13 @@ impl EpsilonApp {
                     let points: Vec<egui::Pos2> = element
                         .points
                         .iter()
-                        .map(|point| world_to_screen_pos(canvas_rect, &self.viewport, *point))
+                        .map(|point| {
+                            world_to_screen_pos(
+                                canvas_rect,
+                                &self.viewport,
+                                element_world_point(element, *point),
+                            )
+                        })
                         .collect();
                     if points.len() >= 2 {
                         painter.add(egui::Shape::line(points, stroke));
@@ -2053,6 +2222,50 @@ mod tests {
         let second = app.document.element(second).expect("second");
         assert_eq!(second.x, 200.0);
         assert_eq!((second.width, second.height), (200.0, 100.0));
+    }
+
+    #[test]
+    fn rotation_rotates_selection_around_collective_center() {
+        let mut app = EpsilonApp::default();
+        let first = app
+            .document
+            .add(Element::new(ElementKind::Rectangle, 0.0, 0.0, 50.0, 50.0));
+        let second = app
+            .document
+            .add(Element::new(ElementKind::Rectangle, 100.0, 0.0, 50.0, 50.0));
+        app.selected.extend([first, second]);
+        app.transform_original = app.selected_snapshots();
+        app.rotation_center = app.selection_bounds().expect("bounds").center();
+
+        app.apply_rotation(std::f64::consts::PI);
+
+        let first = app.document.element(first).expect("first");
+        assert!((first.angle - std::f64::consts::PI).abs() < 1e-9);
+        assert!((first.x - 100.0).abs() < 1e-9);
+        let second = app.document.element(second).expect("second");
+        assert!((second.x - 0.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn rotated_selection_keeps_screen_space_handles() {
+        let mut app = EpsilonApp::default();
+        let id = app
+            .document
+            .add(Element::new(ElementKind::Rectangle, 0.0, 0.0, 100.0, 50.0));
+        app.selected.insert(id);
+        app.transform_original = app.selected_snapshots();
+        app.rotation_center = app.selection_bounds().expect("bounds").center();
+        app.apply_rotation(std::f64::consts::FRAC_PI_2);
+
+        let bounds = app.selection_bounds().expect("rotated bounds");
+        let screen = world_rect_screen(
+            egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0)),
+            &Viewport::default(),
+            bounds,
+        );
+        assert_eq!(handle_screen_positions(screen).len(), 8);
+        assert!((screen.width() - 50.0).abs() < 0.01);
+        assert!((screen.height() - 100.0).abs() < 0.01);
     }
 
     #[test]
