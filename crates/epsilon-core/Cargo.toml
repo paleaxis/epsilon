@@ -1,0 +1,15 @@
+[package]
+name = "epsilon-core"
+description = "Epsilon document model, geometry and canvas engine (no UI dependencies)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+# Intentionally no dependencies yet. In particular, this crate must never depend
+# on egui/eframe: the engine is UI-agnostic by design.
+[dependencies]
+
+[lints.rust]
+unsafe_code = "forbid"

@@ -1,0 +1,27 @@
+[workspace]
+resolver = "3"
+members = ["crates/epsilon-core", "crates/epsilon-app"]
+default-members = ["crates/epsilon-app"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.95"
+license = "GPL-3.0-only"
+repository = "https://github.com/paleaxis/epsilon"
+
+[workspace.dependencies]
+egui = "0.37"
+# glow (OpenGL) instead of the default wgpu backend: smaller dependency graph,
+# broad Linux driver support, no shader compiler stack.
+eframe = { version = "0.37", default-features = false, features = [
+    "default_fonts",
+    "glow",
+    "wayland",
+    "x11",
+] }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true

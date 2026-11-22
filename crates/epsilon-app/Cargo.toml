@@ -1,0 +1,19 @@
+[package]
+name = "epsilon-app"
+description = "Epsilon native desktop whiteboard"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "epsilon"
+path = "src/main.rs"
+
+[dependencies]
+egui.workspace = true
+eframe.workspace = true
+
+[lints.rust]
+unsafe_code = "forbid"
