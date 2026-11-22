@@ -386,3 +386,20 @@ fit-to-content and currently resets as well because no document content exists.
 
 **Consequences.** Zoom and scroll stay responsive without duplicating egui's
 touch handling. Fit-to-content can be refined when document bounds exist.
+
+---
+
+## D-021 — Adaptive grid step uses powers of two (2026-11-22)
+
+**Context.** Task 2.5 requires adaptive spacing without visible drift and
+snapping-ready math.
+
+**Decision.** `epsilon-core::grid::grid_step` derives the world spacing from the
+configured base size by powers of two until its on-screen size lies in the
+requested range. Snapping rounds to the same step. The app renders the grid as
+world-aligned lines and keeps the toggle in settings, the View menu, properties
+and status bar.
+
+**Consequences.** Grid spacing changes in stable, predictable steps and snapping
+stays consistent with the visible grid. Rendering cost is bounded by the minimum
+on-screen spacing.

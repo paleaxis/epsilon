@@ -199,13 +199,17 @@ Completed 2026-11-22: Ctrl+wheel/pinch zoom is anchored at the cursor, +/- and
 0 buttons plus Plus/Minus/0 shortcuts work, wheel scrolling is horizontal with
 Shift, and the status bar shows the zoom percentage.
 
-### [ ] 2.5 — Optional grid
+### [x] 2.5 — Optional grid
 
 Adaptive dot/line grid with configurable size, toggle and snapping-ready math;
 grid stays crisp and seamless at all zoom levels.
 
 Acceptance: toggle works from View menu; spacing adapts without visible drift;
 toggle state in status/properties; unit tests for grid-step selection.
+
+Completed 2026-11-22: adaptive line grid uses `epsilon-core::grid`, toggles from
+View menu and the properties panel, and reports state in the status bar. Core
+tests cover grid-step selection and snapping.
 
 ### [ ] 2.6 — Pointer input state machine
 

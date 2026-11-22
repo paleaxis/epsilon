@@ -4,6 +4,11 @@ Notable changes, newest first. Version sections are added at release time.
 
 ## [Unreleased]
 
+### Added — 2026-11-22 (task 2.5)
+
+- Adaptive canvas grid with View-menu and properties-panel toggles.
+- Grid state is shown in the status bar; snapping helpers live in core.
+
 ### Added — 2026-11-22 (task 2.4)
 
 - Ctrl+wheel and pinch zoom anchored at the cursor, plus +/- and reset buttons.

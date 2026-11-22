@@ -1,6 +1,7 @@
 use eframe::egui::{self, Align, Layout, RichText};
 
 use epsilon_core::geometry::Point;
+use epsilon_core::grid;
 use epsilon_core::viewport::Viewport;
 
 use crate::layout;
@@ -20,6 +21,8 @@ const SETTINGS_KEY: &str = "epsilon.settings";
 struct PersistedSettings {
     theme: Theme,
     tool: Tool,
+    #[serde(default)]
+    grid_enabled: bool,
 }
 
 /// Root application object and native shell.
@@ -42,6 +45,8 @@ pub struct EpsilonApp {
     /// Last pointer position in world coordinates, if the pointer is over the
     /// canvas. Drives the status-bar readout.
     pointer_world: Option<Point>,
+    /// Whether the canvas grid is visible.
+    grid_enabled: bool,
     /// Last canvas rect, used by toolbar zoom controls.
     canvas_rect: egui::Rect,
     /// Whether a pan gesture is currently active.
@@ -61,6 +66,7 @@ impl Default for EpsilonApp {
             viewport: Viewport::default(),
             pointer_world: None,
             canvas_rect: egui::Rect::NOTHING,
+            grid_enabled: false,
             panning: false,
             pan_last: None,
         }
@@ -228,6 +234,7 @@ impl EpsilonApp {
         {
             app.theme = settings.theme;
             app.tool = settings.tool;
+            app.grid_enabled = settings.grid_enabled;
         }
         app
     }
@@ -273,6 +280,10 @@ impl EpsilonApp {
                     });
                     ui.menu_button("View", |ui| {
                         self.theme_toggle(ui);
+                        let mut grid = self.grid_enabled;
+                        if ui.checkbox(&mut grid, "Grid").changed() {
+                            self.grid_enabled = grid;
+                        }
                     });
                     ui.menu_button("Help", |ui| {
                         if ui.button("About Epsilon").clicked() {
@@ -412,6 +423,7 @@ impl EpsilonApp {
         // `show_collapsible` keeps the panel resizable and lets it slide closed
         // without losing the persisted width.
         let mut hide_requested = false;
+        let mut grid = self.grid_enabled;
         egui::Panel::right("properties_panel")
             .resizable(true)
             .default_size(layout::PROPERTIES_PANEL_WIDTH)
@@ -439,9 +451,18 @@ impl EpsilonApp {
                             );
                         });
                     });
+                ui.add_space(4.0);
+                egui::CollapsingHeader::new("Canvas")
+                    .default_open(true)
+                    .show(ui, |ui| {
+                        ui.checkbox(&mut grid, "Show grid");
+                    });
             });
         if hide_requested {
             self.properties_open = false;
+        }
+        if grid != self.grid_enabled {
+            self.grid_enabled = grid;
         }
     }
 
@@ -563,6 +584,15 @@ impl EpsilonApp {
                             .small()
                             .weak(),
                     );
+                    ui.add_space(12.0);
+                    ui.label(
+                        RichText::new(format!(
+                            "Grid: {}",
+                            if self.grid_enabled { "on" } else { "off" }
+                        ))
+                        .small()
+                        .weak(),
+                    );
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         ui.label(
                             RichText::new(concat!("Epsilon ", env!("CARGO_PKG_VERSION"))).weak(),
@@ -595,6 +625,63 @@ impl EpsilonApp {
 
                 self.update_pan(ui.ctx(), rect);
                 self.update_zoom(ui.ctx(), rect);
+
+                if self.grid_enabled {
+                    let step =
+                        grid::grid_step(grid::DEFAULT_GRID_SIZE, self.viewport.zoom, 8.0, 64.0);
+                    let min_x = self.viewport.screen_to_world(Point::new(0.0, 0.0)).x;
+                    let max_x = self
+                        .viewport
+                        .screen_to_world(Point::new(rect.width() as f64, 0.0))
+                        .x;
+                    let min_y = self.viewport.screen_to_world(Point::new(0.0, 0.0)).y;
+                    let max_y = self
+                        .viewport
+                        .screen_to_world(Point::new(0.0, rect.height() as f64))
+                        .y;
+                    let (min_x, max_x) = if min_x <= max_x {
+                        (min_x, max_x)
+                    } else {
+                        (max_x, min_x)
+                    };
+                    let (min_y, max_y) = if min_y <= max_y {
+                        (min_y, max_y)
+                    } else {
+                        (max_y, min_y)
+                    };
+
+                    let painter = ui.painter();
+                    let color = ui.visuals().widgets.noninteractive.bg_stroke.color;
+                    let stroke = egui::Stroke::new(1.0, color);
+
+                    let mut x = (min_x / step).floor() * step;
+                    while x <= max_x {
+                        let screen_x =
+                            rect.min.x + self.viewport.world_to_screen(Point::new(x, 0.0)).x as f32;
+                        painter.line_segment(
+                            [
+                                egui::pos2(screen_x, rect.min.y),
+                                egui::pos2(screen_x, rect.max.y),
+                            ],
+                            stroke,
+                        );
+                        x += step;
+                    }
+
+                    let mut y = (min_y / step).floor() * step;
+                    while y <= max_y {
+                        let screen_y =
+                            rect.min.y + self.viewport.world_to_screen(Point::new(0.0, y)).y as f32;
+                        painter.line_segment(
+                            [
+                                egui::pos2(rect.min.x, screen_y),
+                                egui::pos2(rect.max.x, screen_y),
+                            ],
+                            stroke,
+                        );
+                        y += step;
+                    }
+                }
 
                 // Prove the coordinate pipeline: the world origin is projected
                 // through the viewport and marked on screen.
@@ -707,6 +794,7 @@ impl eframe::App for EpsilonApp {
             &PersistedSettings {
                 theme: self.theme,
                 tool: self.tool,
+                grid_enabled: self.grid_enabled,
             },
         );
     }
