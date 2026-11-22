@@ -4,6 +4,10 @@ Notable changes, newest first. Version sections are added at release time.
 
 ## [Unreleased]
 
+### Added — 2026-11-23 (task 3.3)
+
+- Ellipse tool with drag preview and document rendering.
+
 ### Added — 2026-11-23 (task 3.2)
 
 - Screen-space element rendering with paint-order support.

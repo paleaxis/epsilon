@@ -445,10 +445,26 @@ round-trips preserve both order and IDs, and core remains UI-independent.
 
 **Decision.** `EpsilonApp` owns the in-memory `Document`. Rendering projects each
 element's world bounds through `Viewport` into a screen-space `egui::Rect`;
-`element_screen_rect` is a pure helper so zoom behavior is unit-tested. Rectangle
+`element_screen_rect` is a pure helper so zoom behavior is unit-tested. Shape
 drags store normalized world bounds and are discarded when either screen
 dimension is below 3 pixels. The live preview uses the same projection helper.
 
 **Consequences.** World geometry stays canonical and zoom-independent, while the
 app only adapts it at the rendering boundary. Shape-specific drawing can reuse
 the same adapter in later tasks.
+
+---
+
+## D-025 — Shape drags carry their element kind (2026-11-23)
+
+**Context.** Task 3.3 adds ellipses while keeping rectangle behavior and the
+same minimum-size/preview semantics.
+
+**Decision.** `PointerMode::Dragging` stores the `ElementKind` chosen when the
+drag starts. `drawing_kind(tool)` maps drag-created tools to element kinds, and
+`commit_shape` creates the corresponding element from normalized world bounds.
+Preview and document rendering switch on the kind.
+
+**Consequences.** Both tools share one drag pipeline, the committed shape cannot
+change if the active tool changes mid-drag, and new drag-created tools only need
+a mapping and a render arm.

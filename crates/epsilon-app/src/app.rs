@@ -26,8 +26,8 @@ struct PersistedSettings {
     grid_enabled: bool,
 }
 
-/// Minimum on-screen width/height for a rectangle drag to be committed.
-const MIN_RECTANGLE_PIXELS: f64 = 3.0;
+/// Minimum on-screen width/height for a shape drag to be committed.
+const MIN_SHAPE_PIXELS: f64 = 3.0;
 
 /// High-level pointer interaction mode for the canvas.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -38,9 +38,19 @@ enum PointerMode {
     },
     /// A drag that creates or moves canvas content, in world coordinates.
     Dragging {
+        kind: ElementKind,
         start: Point,
         current: Point,
     },
+}
+
+/// Element kind created by a drag with the given tool.
+fn drawing_kind(tool: Tool) -> Option<ElementKind> {
+    match tool {
+        Tool::Rectangle => Some(ElementKind::Rectangle),
+        Tool::Ellipse => Some(ElementKind::Ellipse),
+        _ => None,
+    }
 }
 
 /// Projects an element's world bounds into screen space.
@@ -583,7 +593,7 @@ impl EpsilonApp {
             egui::CursorIcon::Grabbing
         } else if self.tool == Tool::Hand || (space_down && !typing) {
             egui::CursorIcon::Grab
-        } else if self.tool == Tool::Rectangle {
+        } else if drawing_kind(self.tool).is_some() {
             egui::CursorIcon::Crosshair
         } else {
             egui::CursorIcon::Default
@@ -602,7 +612,7 @@ impl EpsilonApp {
         ))
     }
 
-    /// Starts, updates and commits rectangle drags for the rectangle tool.
+    /// Starts, updates and commits shape drags for the active drawing tool.
     fn update_drawing(&mut self, ctx: &egui::Context, canvas_rect: egui::Rect) {
         let pointer_pos = ctx.pointer_hover_pos();
         let primary_down = ctx.input(|input| input.pointer.primary_down());
@@ -610,20 +620,29 @@ impl EpsilonApp {
         let space_down = ctx.input(|input| input.key_down(egui::Key::Space));
         let typing = ctx.egui_wants_keyboard_input();
 
-        if let PointerMode::Dragging { start, current } = self.pointer_mode {
+        if let PointerMode::Dragging {
+            kind,
+            start,
+            current,
+        } = self.pointer_mode
+        {
             let current = pointer_pos
                 .map(|pos| self.screen_to_world(canvas_rect, pos))
                 .unwrap_or(current);
             if primary_down {
-                self.pointer_mode = PointerMode::Dragging { start, current };
+                self.pointer_mode = PointerMode::Dragging {
+                    kind,
+                    start,
+                    current,
+                };
             } else {
-                self.commit_rectangle(start, current);
+                self.commit_shape(kind, start, current);
                 self.pointer_mode = PointerMode::Idle;
             }
             return;
         }
 
-        if self.tool == Tool::Rectangle
+        if let Some(kind) = drawing_kind(self.tool)
             && primary_pressed
             && !space_down
             && !typing
@@ -632,28 +651,23 @@ impl EpsilonApp {
         {
             let world = self.screen_to_world(canvas_rect, pos);
             self.pointer_mode = PointerMode::Dragging {
+                kind,
                 start: world,
                 current: world,
             };
         }
     }
 
-    /// Commits a rectangle if the drag is large enough on screen.
-    fn commit_rectangle(&mut self, start: Point, end: Point) {
+    /// Commits a shape if the drag is large enough on screen.
+    fn commit_shape(&mut self, kind: ElementKind, start: Point, end: Point) {
         let rect = Rect::from_corners(start, end);
         let screen_width = rect.width() * self.viewport.zoom;
         let screen_height = rect.height() * self.viewport.zoom;
-        if screen_width < MIN_RECTANGLE_PIXELS || screen_height < MIN_RECTANGLE_PIXELS {
+        if screen_width < MIN_SHAPE_PIXELS || screen_height < MIN_SHAPE_PIXELS {
             return;
         }
 
-        let mut element = Element::new(
-            ElementKind::Rectangle,
-            rect.min.x,
-            rect.min.y,
-            rect.width(),
-            rect.height(),
-        );
+        let mut element = Element::new(kind, rect.min.x, rect.min.y, rect.width(), rect.height());
         element.style.stroke = match self.theme {
             Theme::Dark => DocumentColor::rgb(235, 235, 235),
             Theme::Light => DocumentColor::BLACK,
@@ -664,36 +678,63 @@ impl EpsilonApp {
     /// Draws the document in paint order through the screen-space adapter.
     fn paint_document(&self, painter: &egui::Painter, canvas_rect: egui::Rect) {
         for element in self.document.paint_order() {
-            if element.kind != ElementKind::Rectangle {
-                continue;
-            }
-
             let rect = element_screen_rect(canvas_rect, &self.viewport, element);
             let fill = document_color(element.style.fill);
-            if fill.a() > 0 {
-                painter.rect_filled(rect, 0.0, fill);
-            }
             let stroke_width = (element.style.stroke_width * self.viewport.zoom).max(0.75) as f32;
-            painter.rect_stroke(
-                rect,
-                0.0,
-                egui::Stroke::new(stroke_width, document_color(element.style.stroke)),
-                egui::StrokeKind::Inside,
-            );
+            let stroke = egui::Stroke::new(stroke_width, document_color(element.style.stroke));
+
+            match element.kind {
+                ElementKind::Rectangle => {
+                    if fill.a() > 0 {
+                        painter.rect_filled(rect, 0.0, fill);
+                    }
+                    painter.rect_stroke(rect, 0.0, stroke, egui::StrokeKind::Inside);
+                }
+                ElementKind::Ellipse => {
+                    let center = rect.center();
+                    let radius = rect.size() / 2.0;
+                    if fill.a() > 0 {
+                        painter.add(egui::Shape::ellipse_filled(center, radius, fill));
+                    }
+                    painter.add(egui::Shape::ellipse_stroke(center, radius, stroke));
+                }
+                _ => {}
+            }
         }
     }
 
-    /// Draws the live rectangle preview while dragging.
+    /// Draws the live shape preview while dragging.
     fn paint_draft(&self, painter: &egui::Painter, canvas_rect: egui::Rect, accent: egui::Color32) {
-        if let PointerMode::Dragging { start, current } = self.pointer_mode {
+        if let PointerMode::Dragging {
+            kind,
+            start,
+            current,
+        } = self.pointer_mode
+        {
             let rect = draft_screen_rect(canvas_rect, &self.viewport, start, current);
-            painter.rect_filled(rect, 0.0, accent.gamma_multiply(0.18));
-            painter.rect_stroke(
-                rect,
-                0.0,
-                egui::Stroke::new(1.0, accent),
-                egui::StrokeKind::Inside,
-            );
+            let fill = accent.gamma_multiply(0.18);
+            match kind {
+                ElementKind::Rectangle => {
+                    painter.rect_filled(rect, 0.0, fill);
+                    painter.rect_stroke(
+                        rect,
+                        0.0,
+                        egui::Stroke::new(1.0, accent),
+                        egui::StrokeKind::Inside,
+                    );
+                }
+                ElementKind::Ellipse => {
+                    let center = rect.center();
+                    let radius = rect.size() / 2.0;
+                    painter.add(egui::Shape::ellipse_filled(center, radius, fill));
+                    painter.add(egui::Shape::ellipse_stroke(
+                        center,
+                        radius,
+                        egui::Stroke::new(1.0, accent),
+                    ));
+                }
+                _ => {}
+            }
         }
     }
 
@@ -1071,13 +1112,12 @@ mod tests {
         assert!(ctx.style_of(egui::Theme::Dark).visuals.dark_mode);
     }
 
-    #[test]
-    fn rectangle_drag_commits_on_release() {
+    fn drag_shape_on_canvas(tool: Tool) -> EpsilonApp {
         let ctx = egui::Context::default();
         theme::apply(&ctx, Theme::Dark);
         let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1000.0, 700.0));
         let mut app = EpsilonApp {
-            tool: Tool::Rectangle,
+            tool,
             ..Default::default()
         };
 
@@ -1122,10 +1162,27 @@ mod tests {
                 modifiers: egui::Modifiers::NONE,
             }],
         );
+        app
+    }
 
+    #[test]
+    fn rectangle_drag_commits_on_release() {
+        let app = drag_shape_on_canvas(Tool::Rectangle);
         assert_eq!(app.document.elements.len(), 1);
         let element = &app.document.elements[0];
         assert_eq!(element.kind, ElementKind::Rectangle);
+        let expected_width = 80.0 / app.viewport.zoom;
+        let expected_height = 60.0 / app.viewport.zoom;
+        assert!((element.width - expected_width).abs() < 0.01);
+        assert!((element.height - expected_height).abs() < 0.01);
+    }
+
+    #[test]
+    fn ellipse_drag_commits_on_release() {
+        let app = drag_shape_on_canvas(Tool::Ellipse);
+        assert_eq!(app.document.elements.len(), 1);
+        let element = &app.document.elements[0];
+        assert_eq!(element.kind, ElementKind::Ellipse);
         let expected_width = 80.0 / app.viewport.zoom;
         let expected_height = 60.0 / app.viewport.zoom;
         assert!((element.width - expected_width).abs() < 0.01);
@@ -1142,7 +1199,11 @@ mod tests {
             ..Default::default()
         };
 
-        app.commit_rectangle(Point::new(10.0, 20.0), Point::new(4.0, 8.0));
+        app.commit_shape(
+            ElementKind::Rectangle,
+            Point::new(10.0, 20.0),
+            Point::new(4.0, 8.0),
+        );
 
         assert_eq!(app.document.elements.len(), 1);
         let element = &app.document.elements[0];
@@ -1154,13 +1215,46 @@ mod tests {
     }
 
     #[test]
-    fn rectangle_commit_discards_drags_below_minimum_screen_size() {
+    fn shape_commit_discards_drags_below_minimum_screen_size() {
         let mut app = EpsilonApp::default();
-        app.commit_rectangle(Point::ZERO, Point::new(1.0, 3.0));
+        app.commit_shape(ElementKind::Ellipse, Point::ZERO, Point::new(1.0, 3.0));
         assert!(app.document.elements.is_empty());
 
-        app.commit_rectangle(Point::ZERO, Point::new(3.0, 3.0));
+        app.commit_shape(ElementKind::Ellipse, Point::ZERO, Point::new(3.0, 3.0));
         assert_eq!(app.document.elements.len(), 1);
+    }
+
+    #[test]
+    fn ellipse_screen_rect_matches_viewport_at_extreme_zoom() {
+        let canvas = egui::Rect::from_min_size(egui::pos2(10.0, 20.0), egui::vec2(800.0, 600.0));
+        let element = Element::with_id(
+            epsilon_core::document::ElementId::new(1),
+            ElementKind::Ellipse,
+            100.0,
+            200.0,
+            50.0,
+            30.0,
+        );
+
+        for (zoom, offset, expected) in [
+            (
+                0.1,
+                Point::new(10.0, 20.0),
+                egui::Rect::from_min_size(egui::pos2(30.0, 60.0), egui::vec2(5.0, 3.0)),
+            ),
+            (
+                10.0,
+                Point::new(-100.0, -200.0),
+                egui::Rect::from_min_size(egui::pos2(910.0, 1820.0), egui::vec2(500.0, 300.0)),
+            ),
+        ] {
+            let viewport = Viewport { offset, zoom };
+            let actual = element_screen_rect(canvas, &viewport, &element);
+            assert!((actual.min.x - expected.min.x).abs() < 0.01);
+            assert!((actual.min.y - expected.min.y).abs() < 0.01);
+            assert!((actual.width() - expected.width()).abs() < 0.01);
+            assert!((actual.height() - expected.height()).abs() < 0.01);
+        }
     }
 
     #[test]
@@ -1320,6 +1414,7 @@ mod tests {
     fn pointer_mode_dragging_variant_is_representable() {
         let app = EpsilonApp {
             pointer_mode: PointerMode::Dragging {
+                kind: ElementKind::Ellipse,
                 start: Point::ZERO,
                 current: Point::ZERO,
             },

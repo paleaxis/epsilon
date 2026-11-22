@@ -258,11 +258,16 @@ a live drag preview. Rectangle drags commit normalized world bounds and discard
 drags smaller than 3 screen pixels. Numeric tests cover 10% and 1000% zoom plus
 an end-to-end pointer press/move/release frame sequence.
 
-### [ ] 3.3 — Ellipse tool
+### [x] 3.3 — Ellipse tool
 
 Drag-to-create ellipse with correct bounds and stroke/fill.
 
 Acceptance: rendering matches bounds at all zooms; empty/zero-size drags discard.
+
+Completed 2026-11-23: the shared drag path now creates ellipses, the preview
+and document renderer draw ellipses inscribed in their element bounds, and the
+minimum-size discard applies to zero/small drags. Frame and projection tests
+cover ellipse creation at extreme zoom.
 
 ### [ ] 3.4 — Diamond tool
 

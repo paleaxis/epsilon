@@ -2,15 +2,16 @@
 
 Last updated: 2026-11-23
 Current stage: **Stage 3 — Drawing engine**
-Last completed task: **3.2 — Rendering pipeline and rectangle tool**
-Next task: **3.3 — Ellipse tool**
+Last completed task: **3.3 — Ellipse tool**
+Next task: **3.4 — Diamond tool**
 
 ## Status
 
 The shell has working File/View/Help menus and a toolbar with app identity,
 theme toggle and About. Theme/tool settings and window/panel state persist from
 task 1.8 (completed early). The canvas pans, zooms, shows an adaptive grid, and
-the Rectangle tool creates persistent in-memory rectangles with a live preview.
+the Rectangle and Ellipse tools create persistent in-memory shapes with live
+previews.
 
 Repository layout:
 
@@ -38,7 +39,7 @@ Working UI actions:
 | View menu | "Dark mode" checkbox, applied immediately |
 | Help menu | About Epsilon (dialog) |
 | Top toolbar | Wordmark, document title, theme checkbox, About button, version |
-| Canvas | Rectangle tool drag creates rectangles; middle/space/hand drag pans; wheel zooms |
+| Canvas | Rectangle/Ellipse drag creates shapes; middle/space/hand drag pans; wheel zooms |
 | Properties | Show-grid toggle and panel hide control |
 
 Only working actions are listed; the Edit menu is intentionally absent until
@@ -74,7 +75,7 @@ Other shell behavior:
 | --- | --- |
 | `cargo fmt --all -- --check` | exit 0 |
 | `cargo clippy --workspace --all-targets -- -D warnings` | exit 0 |
-| `cargo test --workspace` | **65 passed, 0 failed** (32 app, 33 core) |
+| `cargo test --workspace` | **67 passed, 0 failed** (34 app, 33 core) |
 | `cargo build --workspace` | success, no warnings |
 | `timeout 8 ./target/debug/epsilon` | exit 124 (alive, no stderr) |
 
@@ -102,7 +103,8 @@ behind them are tested.
 - Core document schema with canvas settings, element base fields, stable IDs
   and documented paint-order semantics.
 - App-held document rendering with paint order and screen-space projection.
-- Rectangle tool with live preview, minimum-size discard and world-space bounds.
+- Rectangle and ellipse tools with live preview, minimum-size discard and
+  world-space bounds.
 - Persisted theme/tool; eframe-persisted window geometry and panel widths.
 - Tool palette with shortcuts, painted icons and accessible names.
 - Dark/light themes with central palette and contrast tests.
@@ -136,8 +138,8 @@ automation allowed). Items requiring a human reviewer:
 - Edit menu and formatting actions are not implemented (Stage 4); File has only
   Quit until document I/O (Stage 5).
 - Shell polish and manual verification pass remains (1.9).
-- Only rectangles render; ellipse, diamond, line, arrow, freehand and text
-  tools are still pending (Stage 3.3+).
+- Only rectangles and ellipses render; diamond, line, arrow, freehand and text
+  tools are still pending (Stage 3.4+).
 - No CI; local verification only. No visual/screenshot review performed.
 - Window/panel restore relies on eframe/egui and was not re-measured under niri.
 - Project license: GPL-3.0 (`LICENSE`); manifests declare `GPL-3.0-only`.
@@ -146,7 +148,7 @@ automation allowed). Items requiring a human reviewer:
 
 1. Read `AGENTS.md`, `project/ROADMAP.md`, this file, `project/DECISIONS.md`.
 2. `git status` must be clean; run `cargo test --workspace` for the baseline.
-3. Implement only task **3.3** (ellipse tool).
+3. Implement only task **3.4** (diamond tool).
 4. Verify format, clippy, tests, build, and `timeout 8 ./target/debug/epsilon`.
 5. Update this file, `ROADMAP.md`, `CHANGELOG.md`, then commit and push.
 
