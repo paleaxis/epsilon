@@ -237,3 +237,29 @@ Selecting a tool only updates `EpsilonApp::tool`; Stage 3 will consume it.
 **Consequences.** Adding a tool requires an enum variant, a shortcut, an icon
 arm and tests; no external assets. Painted icons have no automated visual
 regression test — layout and launch checks only — until manual review.
+
+---
+
+## D-013 — Settings live in eframe persistence; fixed properties-panel range (2026-11-22)
+
+**Context.** Theme, tool, window geometry and panel widths should survive a
+restart without adding a config-file abstraction. The earlier properties-panel
+width clamp (D-010) derived its maximum from the current window width, which can
+shrink a saved width during transient startup frames.
+
+**Decision.** Enable eframe's `persistence` feature. App-owned settings
+(`theme`, `tool`) are a single `PersistedSettings` struct with `#[serde(default)]`
+stored under the stable key `epsilon.settings` via `eframe::get_value` /
+`eframe::set_value`; missing or corrupt values fall back to defaults. Window
+geometry uses eframe's built-in `persist_window`, and resizable panel sizes use
+egui memory (eframe persists it; `persist_egui_memory` is asserted in a test).
+The properties panel uses a fixed 200–400px range instead of a dynamic clamp;
+the compile-time layout budget already reserves a 240px canvas at the 720px
+minimum window. Documents never live in the settings store — they get real files
+in Stage 5.
+
+**Consequences.** Minimal code and no new dependency beyond `serde`/eframe's
+persistence feature. Storage keys and serde defaults must stay backward
+compatible; incompatible schema changes need a new key or migration. Window and
+panel restoration is framework behavior, so it is verified by inspecting the
+`app.ron` payload rather than re-measuring a tiled native window.

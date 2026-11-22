@@ -4,6 +4,15 @@ Notable changes, newest first. Version sections are added at release time.
 
 ## [Unreleased]
 
+### Added — 2026-11-22 (task 1.8, done out of order)
+
+- eframe persistence enabled; theme and active tool are saved to the app storage
+  and restored on startup, with defaults on missing/corrupt data.
+- Window geometry persisted through eframe's window settings; resizable panel
+  widths persist through egui memory.
+- Properties panel uses a fixed 200–400px range so transient startup frames can
+  no longer clamp a saved width.
+
 ### Added — 2026-11-22 (task 1.3)
 
 - Tool model with nine tools: Select, Hand, Rectangle, Ellipse, Diamond, Line,

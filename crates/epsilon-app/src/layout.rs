@@ -42,33 +42,3 @@ const _: () = assert!(
         && PROPERTIES_PANEL_WIDTH <= PROPERTIES_PANEL_MAX_WIDTH,
     "properties panel default width must be within its resize range"
 );
-
-/// Widest the properties panel may become given the width left over after the
-/// tool rail, so the canvas is never squeezed below its minimum width.
-pub fn properties_panel_max_width(available_width: f32) -> f32 {
-    (available_width - CANVAS_MIN_WIDTH)
-        .clamp(PROPERTIES_PANEL_MIN_WIDTH, PROPERTIES_PANEL_MAX_WIDTH)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn properties_panel_can_grow_at_minimum_window() {
-        let available = MIN_WINDOW_SIZE[0] - TOOL_RAIL_WIDTH;
-        assert_eq!(
-            properties_panel_max_width(available),
-            PROPERTIES_PANEL_MAX_WIDTH
-        );
-    }
-
-    #[test]
-    fn properties_panel_never_starves_canvas() {
-        assert_eq!(
-            properties_panel_max_width(CANVAS_MIN_WIDTH + 10.0),
-            PROPERTIES_PANEL_MIN_WIDTH
-        );
-        assert_eq!(properties_panel_max_width(0.0), PROPERTIES_PANEL_MIN_WIDTH);
-    }
-}

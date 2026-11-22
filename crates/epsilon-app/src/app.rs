@@ -4,6 +4,21 @@ use crate::layout;
 use crate::theme::{self, Theme};
 use crate::tools::{self, Tool};
 
+/// Storage key for application settings (theme, active tool).
+const SETTINGS_KEY: &str = "epsilon.settings";
+
+/// App-owned settings persisted across restarts.
+///
+/// Window geometry and panel widths are not stored here: eframe persists the
+/// window settings (`persist_window`) and the egui memory, which includes
+/// resizable panel sizes, in the same storage on exit.
+#[derive(Debug, Default, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+struct PersistedSettings {
+    theme: Theme,
+    tool: Tool,
+}
+
 /// Root application object and native shell.
 ///
 /// This is the Stage 1 shell: regions are laid out and themed, with the tool
@@ -18,8 +33,21 @@ pub struct EpsilonApp {
 
 impl EpsilonApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
-        let app = Self::default();
+        let app = Self::from_storage(cc.storage);
         theme::apply(&cc.egui_ctx, app.theme);
+        app
+    }
+
+    /// Restores app-owned settings. Missing or invalid storage falls back to
+    /// defaults; eframe logs decode failures rather than propagating them.
+    fn from_storage(storage: Option<&dyn eframe::Storage>) -> Self {
+        let mut app = Self::default();
+        if let Some(settings) = storage
+            .and_then(|storage| eframe::get_value::<PersistedSettings>(storage, SETTINGS_KEY))
+        {
+            app.theme = settings.theme;
+            app.tool = settings.tool;
+        }
         app
     }
 
@@ -121,13 +149,14 @@ impl EpsilonApp {
     }
 
     fn properties_panel(&self, ui: &mut egui::Ui) {
-        // Keep the canvas usable even if the window manager forces the window
-        // below its configured minimum size.
-        let max_width = layout::properties_panel_max_width(ui.available_width());
+        // The resize range is fixed rather than derived from the current
+        // window: transient small frames at startup would otherwise clamp and
+        // overwrite the persisted panel width. The compile-time budget in
+        // `layout.rs` guarantees the canvas minimum at the window minimum.
         egui::Panel::right("properties_panel")
             .resizable(true)
             .default_size(layout::PROPERTIES_PANEL_WIDTH)
-            .size_range(layout::PROPERTIES_PANEL_MIN_WIDTH..=max_width)
+            .size_range(layout::PROPERTIES_PANEL_MIN_WIDTH..=layout::PROPERTIES_PANEL_MAX_WIDTH)
             .show(ui, |ui| {
                 ui.add_space(4.0);
                 ui.label(RichText::new("PROPERTIES").small().strong());
@@ -207,10 +236,24 @@ impl eframe::App for EpsilonApp {
         let _canvas_rect = self.show_shell(ui);
         self.about_window(ui.ctx());
     }
+
+    fn save(&mut self, storage: &mut dyn eframe::Storage) {
+        eframe::set_value(
+            storage,
+            SETTINGS_KEY,
+            &PersistedSettings {
+                theme: self.theme,
+                tool: self.tool,
+            },
+        );
+    }
 }
 
 #[cfg(test)]
 mod tests {
+    use eframe::App as _;
+    use eframe::Storage as _;
+
     use super::*;
 
     /// Renders one shell frame into a headless egui context of the given size
@@ -309,6 +352,69 @@ mod tests {
         };
         let output = ctx.run_ui(input, |ui| app.handle_shortcuts(ui.ctx()));
         output.drop_without_applying_deltas();
+    }
+
+    #[derive(Default)]
+    struct TestStorage(std::collections::HashMap<String, String>);
+
+    impl eframe::Storage for TestStorage {
+        fn get_string(&self, key: &str) -> Option<String> {
+            self.0.get(key).cloned()
+        }
+
+        fn set_string(&mut self, key: &str, value: String) {
+            self.0.insert(key.to_owned(), value);
+        }
+
+        fn remove_string(&mut self, key: &str) {
+            self.0.remove(key);
+        }
+
+        fn flush(&mut self) {}
+    }
+
+    #[test]
+    fn settings_round_trip_through_storage() {
+        let mut app = EpsilonApp {
+            theme: Theme::Light,
+            tool: Tool::Arrow,
+            ..Default::default()
+        };
+        let mut storage = TestStorage::default();
+        eframe::App::save(&mut app, &mut storage);
+
+        let restored = EpsilonApp::from_storage(Some(&storage));
+        assert_eq!(restored.theme, Theme::Light);
+        assert_eq!(restored.tool, Tool::Arrow);
+    }
+
+    #[test]
+    fn missing_settings_use_defaults() {
+        let storage = TestStorage::default();
+        let restored = EpsilonApp::from_storage(Some(&storage));
+        assert_eq!(restored.theme, Theme::Dark);
+        assert_eq!(restored.tool, Tool::Select);
+
+        let restored = EpsilonApp::from_storage(None);
+        assert_eq!(restored.theme, Theme::Dark);
+        assert_eq!(restored.tool, Tool::Select);
+    }
+
+    #[test]
+    fn corrupt_settings_use_defaults() {
+        let mut storage = TestStorage::default();
+        storage.set_string(SETTINGS_KEY, "not valid ron {{".to_owned());
+
+        let restored = EpsilonApp::from_storage(Some(&storage));
+        assert_eq!(restored.theme, Theme::Dark);
+        assert_eq!(restored.tool, Tool::Select);
+    }
+
+    #[test]
+    fn egui_memory_is_persisted_for_panel_widths() {
+        // Resizable panel sizes live in egui memory; eframe must keep saving it
+        // for the properties panel width to survive a restart.
+        assert!(EpsilonApp::default().persist_egui_memory());
     }
 
     #[test]

@@ -99,13 +99,19 @@ active shortcuts; duplicate bindings are rejected or tested.
 Acceptance: unit test detects duplicate bindings; overlay opens/closes via
 keyboard; shortcuts listed match implemented actions.
 
-### [ ] 1.8 — Window/settings persistence
+### [x] 1.8 — Window/settings persistence
 
 Persist window size, theme, active panel widths and last tool across restarts
 using eframe persistence (adds `persistence` feature + serde).
 
 Acceptance: restart restores values; corrupt/missing storage falls back to
 defaults without error.
+
+Completed 2026-11-22 (out of order at the owner's request): eframe persistence
+enabled; theme + tool saved/restored (round-trip, corrupt/missing fallback and
+native seed-restart verified); window geometry and panel widths stored by
+eframe/egui (verified in `app.ron`, restore not re-measured under the tiling
+compositor).
 
 ### [ ] 1.9 — Shell polish and manual verification pass
 

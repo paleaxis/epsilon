@@ -56,6 +56,10 @@ that is explicitly out of scope until the whiteboard is genuinely usable.
 - Tool icons are vector paths painted in `tools.rs`. Do not add an icon font or
   image-asset dependency; new tools need an enum variant, shortcut, icon and
   tests.
+- User settings use eframe persistence (`app.ron`), never documents. Keep
+  storage keys stable, make new fields `#[serde(default)]`, and treat missing or
+  corrupt storage as defaults rather than an error. Never store document data
+  there; documents get files in Stage 5.
 - Comments explain *why*, not *what*. Do not leave dead code, stub UIs, or
   placeholder features presented as complete.
 
@@ -128,3 +132,6 @@ accurate checkpoint instead of claiming progress.
   use `egui::Context::run_ui` with an explicit `RawInput::screen_rect`.
 - Native launch check: `timeout 8 ./target/debug/epsilon` → exit 124 means it
   stayed alive; any other exit is a failure to investigate.
+- Verification must not disturb the user's desktop. Never close windows through
+  the compositor (for example `niri msg action close-window`); it can hit the
+  wrong focused window. Only terminate PIDs you started for the test.

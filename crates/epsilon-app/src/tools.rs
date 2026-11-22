@@ -14,7 +14,7 @@ const ICON_UNITS: f32 = 20.0;
 const ICON_STROKE_WIDTH: f32 = 1.5;
 
 /// Available tools, in tool-rail order.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub enum Tool {
     #[default]
     Select,
