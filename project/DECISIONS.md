@@ -419,3 +419,19 @@ viewport math stays in `f64`.
 
 **Consequences.** Pointer state is explicit and testable, panel widgets cannot
 start a canvas pan, and panning remains stable at extreme zoom/pan values.
+
+---
+
+## D-023 — Document schema stores z-order explicitly (2026-11-22)
+
+**Context.** Task 3.1 requires ordered elements plus a z-order base field, and
+stable serialization for future file I/O.
+
+**Decision.** `Document.elements` preserves insertion order; each `Element`
+carries an explicit `z_order`. `Document::paint_order` sorts by `z_order` and
+uses insertion order to break ties. `ElementId` is a transparent `u64` newtype
+generated from a process-wide atomic counter. Styling and colors are plain core
+types, serialized with serde.
+
+**Consequences.** Paint order is deterministic and independent of vector order,
+round-trips preserve both order and IDs, and core remains UI-independent.

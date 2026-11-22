@@ -4,6 +4,12 @@ Notable changes, newest first. Version sections are added at release time.
 
 ## [Unreleased]
 
+### Added — 2026-11-22 (task 3.1)
+
+- Core document model with schema version, canvas settings and element base
+  fields, serialized with serde.
+- Stable element IDs, paint-order semantics and JSON round-trip tests.
+
 ### Added — 2026-11-22 (task 2.6)
 
 - Explicit idle/panning/dragging pointer state machine for the canvas.

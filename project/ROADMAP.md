@@ -228,7 +228,7 @@ and frame tests cover middle-click panning and the dragging state.
 
 ## Stage 3 — Drawing engine
 
-### [ ] 3.1 — Document model and element schema (core)
+### [x] 3.1 — Document model and element schema (core)
 
 `Document` with schema version, canvas settings, ordered `Element`s; element base
 fields (id, kind, x/y/width/height, angle, style, z-order, seed, version);
@@ -236,6 +236,12 @@ fields (id, kind, x/y/width/height, angle, style, z-order, seed, version);
 
 Acceptance: round-trip serialization tests; element ordering semantics tested;
 no egui dependency in core.
+
+Completed 2026-11-22: `epsilon-core::document` defines the schema-versioned
+`Document`, canvas settings, element base fields, style/color types and
+monotonic `ElementId` generation. Paint order sorts by `z_order` with stable
+insertion-order ties. JSON round-trip and ordering tests pass; core still has
+no egui dependency.
 
 ### [ ] 3.2 — Rendering pipeline and rectangle tool
 

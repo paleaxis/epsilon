@@ -1,16 +1,16 @@
 # Project State
 
 Last updated: 2026-11-22
-Current stage: **Stage 2 — Canvas engine**
-Last completed task: **2.6 — Pointer input state machine**
-Next task: **2.7 — Tool framework**
+Current stage: **Stage 3 — Drawing engine**
+Last completed task: **3.1 — Document model and element schema (core)**
+Next task: **3.2 — Rendering pipeline and rectangle tool**
 
 ## Status
 
 The shell has working File/View/Help menus and a toolbar with app identity,
 theme toggle and About. Theme/tool settings and window/panel state persist from
-task 1.8 (completed early). The whiteboard is still not usable: the canvas is a
-placeholder until Stage 2 and tools do not draw until Stage 3.
+task 1.8 (completed early). The canvas now pans, zooms and can show an adaptive
+grid, but elements still cannot be drawn until task 3.2.
 
 Repository layout:
 
@@ -21,6 +21,7 @@ README.md                   build/run overview
 project/                    STATE, ROADMAP, DECISIONS, CHANGELOG
 crates/epsilon-core/        UI-independent engine (no egui dependency)
   src/geometry.rs           Point, Rect + 11 unit tests
+  src/document.rs           schema-versioned document, elements, IDs, paint order
 crates/epsilon-app/         eframe desktop shell
   src/main.rs               native entry point (persist_window enabled)
   src/layout.rs             shell size budgets + compile-time assertions
@@ -49,7 +50,7 @@ Other shell behavior:
   Line (L), Arrow (A), Freehand (P), Text (T), painted icons, tooltips,
   selected state; shortcuts defer to focused text input.
 - Theme palette in `theme.rs`, default dark, explicit `ThemePreference`.
-- Six regions: menu bar, top toolbar, left rail, canvas placeholder, collapsible
+- Six regions: menu bar, top toolbar, left rail, pannable/zoomable canvas, collapsible
   properties panel (200–400px, "No selection" empty state), status bar.
 - Persistence: eframe `persistence` enabled; `epsilon.settings` holds theme/tool;
   window geometry and egui panel memory persist through eframe.
@@ -71,7 +72,7 @@ Other shell behavior:
 | --- | --- |
 | `cargo fmt --all -- --check` | exit 0 |
 | `cargo clippy --workspace --all-targets -- -D warnings` | exit 0 |
-| `cargo test --workspace` | **56 passed, 0 failed** (27 app, 29 core) |
+| `cargo test --workspace` | **60 passed, 0 failed** (27 app, 33 core) |
 | `cargo build --workspace` | success, no warnings |
 | `timeout 8 ./target/debug/epsilon` | exit 124 (alive, no stderr) |
 
@@ -87,7 +88,7 @@ behind them are tested.
 
 - Working menus (File/Quit, View/theme, Help/About) and toolbar actions.
 - Collapsible/resizable properties panel with section header and empty state.
-- Status bar reports active tool, pointer/zoom placeholders and app version.
+- Status bar reports active tool, live pointer coordinates, zoom and grid state.
 - Central shortcut registry and F1/? help overlay.
 - Stage 1 shell polish (spacing, separators, compact status text).
 - Core viewport model with world/screen transforms and zoom clamping.
@@ -96,6 +97,8 @@ behind them are tested.
 - Cursor-anchored zoom, wheel scrolling and zoom shortcuts/buttons.
 - Optional adaptive grid with toggle and snapping helpers.
 - Explicit idle/panning/dragging pointer state machine with hover tracking.
+- Core document schema with canvas settings, element base fields, stable IDs
+  and documented paint-order semantics.
 - Persisted theme/tool; eframe-persisted window geometry and panel widths.
 - Tool palette with shortcuts, painted icons and accessible names.
 - Dark/light themes with central palette and contrast tests.
@@ -129,7 +132,7 @@ automation allowed). Items requiring a human reviewer:
 - Edit menu and formatting actions are not implemented (Stage 4); File has only
   Quit until document I/O (Stage 5).
 - Shell polish and manual verification pass remains (1.9).
-- Canvas and drawing (Stages 2–3) are not implemented.
+- Element rendering and drawing tools (Stage 3.2+) are not implemented yet.
 - No CI; local verification only. No visual/screenshot review performed.
 - Window/panel restore relies on eframe/egui and was not re-measured under niri.
 - Project license: GPL-3.0 (`LICENSE`); manifests declare `GPL-3.0-only`.
@@ -138,8 +141,7 @@ automation allowed). Items requiring a human reviewer:
 
 1. Read `AGENTS.md`, `project/ROADMAP.md`, this file, `project/DECISIONS.md`.
 2. `git status` must be clean; run `cargo test --workspace` for the baseline.
-3. Implement only task **2.7** (tool framework: tool trait, registry,
-   activation, cursor, status, shortcuts).
+3. Implement only task **3.2** (rendering pipeline and rectangle tool).
 4. Verify format, clippy, tests, build, and `timeout 8 ./target/debug/epsilon`.
 5. Update this file, `ROADMAP.md`, `CHANGELOG.md`, then commit and push.
 
