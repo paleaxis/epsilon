@@ -99,6 +99,26 @@ impl Color {
     }
 }
 
+/// Stroke pattern for outlines and linear elements.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StrokeStyle {
+    #[default]
+    Solid,
+    Dashed,
+    Dotted,
+}
+
+/// Fill pattern for closed shapes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FillStyle {
+    #[default]
+    Solid,
+    Hatch,
+    CrossHatch,
+}
+
 /// Visual styling shared by every element kind.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct ElementStyle {
@@ -107,6 +127,13 @@ pub struct ElementStyle {
     pub stroke_width: f64,
     /// Element opacity in the range `0.0..=1.0`.
     pub opacity: f64,
+    #[serde(default)]
+    pub stroke_style: StrokeStyle,
+    #[serde(default)]
+    pub fill_style: FillStyle,
+    /// Corner rounding for rectangles, in world units.
+    #[serde(default)]
+    pub roundness: f64,
 }
 
 impl Default for ElementStyle {
@@ -116,6 +143,9 @@ impl Default for ElementStyle {
             fill: Color::TRANSPARENT,
             stroke_width: 2.0,
             opacity: 1.0,
+            stroke_style: StrokeStyle::Solid,
+            fill_style: FillStyle::Solid,
+            roundness: 0.0,
         }
     }
 }
@@ -501,6 +531,9 @@ mod tests {
         );
         first.z_order = 0;
         first.style.fill = Color::rgb(40, 120, 200);
+        first.style.stroke_style = StrokeStyle::Dashed;
+        first.style.fill_style = FillStyle::CrossHatch;
+        first.style.roundness = 8.0;
         first.angle = 15.0;
         document.elements.push(first);
 
@@ -613,6 +646,24 @@ mod tests {
         assert_eq!(element.y, -1.0);
         assert_eq!(element.width, 8.0);
         assert_eq!(element.height, 9.0);
+    }
+
+    #[test]
+    fn element_style_defaults_and_deserializes_legacy_fields() {
+        let style = ElementStyle::default();
+        assert_eq!(style.stroke_style, StrokeStyle::Solid);
+        assert_eq!(style.fill_style, FillStyle::Solid);
+        assert_eq!(style.roundness, 0.0);
+
+        let legacy = r#"{
+            "stroke": {"r":0,"g":0,"b":0,"a":255},
+            "fill": {"r":0,"g":0,"b":0,"a":0},
+            "stroke_width": 2.0,
+            "opacity": 1.0
+        }"#;
+        let restored: ElementStyle = serde_json::from_str(legacy).expect("legacy style");
+        assert_eq!(restored.stroke_style, StrokeStyle::Solid);
+        assert_eq!(restored.fill_style, FillStyle::Solid);
     }
 
     #[test]

@@ -612,3 +612,22 @@ rotation-expanded world bounds in screen space.
 predictable angles, and handle placement remains axis-aligned and usable.
 Rotated closed shapes render as projected polygons; text rotation rendering is
 still axis-aligned and can be revisited when text layout is enhanced.
+
+---
+
+## D-034 — Style patterns are resolved at the app rendering boundary (2026-11-23)
+
+**Context.** Task 3.12 adds opacity, stroke patterns, fill patterns and corner
+roundness without giving core any egui dependency.
+
+**Decision.** `ElementStyle` stores portable enums and numbers, serde-defaulted
+for older documents. The app applies opacity to both colors, draws dashed and
+dotted paths with screen-space dash lengths, fills hatch/cross-hatch by
+intersecting diagonal scanlines with the projected polygon, and applies
+roundness only to unrotated native rectangles. Properties controls copy the
+first selected element's style, expose the options, and write changed values to
+every selected element.
+
+**Consequences.** Core remains renderer-agnostic while all style options are
+serializable and round-trip safe. Mixed selections currently adopt one edited
+style, which task 3.14 can refine with explicit mixed-value presentation.

@@ -3,7 +3,8 @@ use std::collections::HashSet;
 use eframe::egui::{self, Align, Layout, RichText};
 
 use epsilon_core::document::{
-    Color as DocumentColor, Document, Element, ElementId, ElementKind, TextAlign,
+    Color as DocumentColor, Document, Element, ElementId, ElementKind, FillStyle, StrokeStyle,
+    TextAlign,
 };
 use epsilon_core::geometry::{
     Point, Rect, ResizeHandle, arrowhead_points, constrain_angle, resize_rect, rotate_point,
@@ -167,6 +168,121 @@ fn arrowhead_screen_points(
     )
 }
 
+fn paint_fill_path(
+    painter: &egui::Painter,
+    points: &[egui::Pos2],
+    style: FillStyle,
+    color: egui::Color32,
+) {
+    if points.len() < 3 {
+        return;
+    }
+    match style {
+        FillStyle::Solid => {
+            painter.add(egui::Shape::convex_polygon(
+                points.to_vec(),
+                color,
+                egui::Stroke::NONE,
+            ));
+        }
+        FillStyle::Hatch => paint_hatch(painter, points, color, 8.0, false),
+        FillStyle::CrossHatch => paint_hatch(painter, points, color, 8.0, true),
+    }
+}
+
+fn paint_hatch(
+    painter: &egui::Painter,
+    polygon: &[egui::Pos2],
+    color: egui::Color32,
+    spacing: f32,
+    cross: bool,
+) {
+    let stroke = egui::Stroke::new(1.0, color);
+    for sign in [1.0f32, -1.0] {
+        if sign < 0.0 && !cross {
+            break;
+        }
+        let values: Vec<f32> = polygon
+            .iter()
+            .map(|point| point.y + sign * point.x)
+            .collect();
+        let min = values.iter().copied().fold(f32::INFINITY, f32::min);
+        let max = values.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+        let count = (((max - min) / spacing).ceil() as usize).min(500);
+        for index in 0..=count {
+            let offset = min + index as f32 * spacing;
+            let mut hits = Vec::new();
+            for edge in 0..polygon.len() {
+                let previous = polygon[(edge + polygon.len() - 1) % polygon.len()];
+                let current = polygon[edge];
+                let previous_value = previous.y + sign * previous.x;
+                let current_value = current.y + sign * current.x;
+                let denominator = current_value - previous_value;
+                if denominator.abs() <= f32::EPSILON {
+                    continue;
+                }
+                let t = (offset - previous_value) / denominator;
+                if (0.0..=1.0).contains(&t) {
+                    hits.push(previous + (current - previous) * t);
+                }
+            }
+            hits.sort_by(|left, right| left.x.total_cmp(&right.x));
+            for pair in hits.as_chunks::<2>().0 {
+                painter.line_segment([pair[0], pair[1]], stroke);
+            }
+        }
+    }
+}
+
+fn paint_stroke_path(
+    painter: &egui::Painter,
+    points: &[egui::Pos2],
+    closed: bool,
+    stroke: egui::Stroke,
+    style: StrokeStyle,
+) {
+    if points.len() < 2 {
+        return;
+    }
+    let (dash, gap) = match style {
+        StrokeStyle::Solid => {
+            if closed {
+                painter.add(egui::Shape::closed_line(points.to_vec(), stroke));
+            } else {
+                painter.add(egui::Shape::line(points.to_vec(), stroke));
+            }
+            return;
+        }
+        StrokeStyle::Dashed => (8.0, 6.0),
+        StrokeStyle::Dotted => (1.0, 4.0),
+    };
+
+    let segment_count = if closed {
+        points.len()
+    } else {
+        points.len() - 1
+    };
+    for index in 0..segment_count {
+        let start = points[index];
+        let end = points[(index + 1) % points.len()];
+        let vector = end - start;
+        let length = vector.length();
+        if length <= f32::EPSILON {
+            continue;
+        }
+        let direction = vector / length;
+        let mut distance = 0.0;
+        while distance < length {
+            let dash_end = (distance + dash).min(length);
+            painter.line_segment(
+                [start + direction * distance, start + direction * dash_end],
+                stroke,
+            );
+            distance = dash_end + gap;
+        }
+    }
+}
+
 /// World-space point after applying the element's rotation around its center.
 fn element_world_point(element: &Element, point: Point) -> Point {
     rotate_point(point, element.bounds().center(), element.angle)
@@ -271,6 +387,16 @@ fn rotation_handle_position(bounds: egui::Rect) -> egui::Pos2 {
 
 fn document_color(color: DocumentColor) -> egui::Color32 {
     egui::Color32::from_rgba_unmultiplied(color.r, color.g, color.b, color.a)
+}
+
+fn document_color_with_opacity(color: DocumentColor, opacity: f64) -> egui::Color32 {
+    let alpha = (color.a as f64 * opacity.clamp(0.0, 1.0)).round() as u8;
+    egui::Color32::from_rgba_unmultiplied(color.r, color.g, color.b, alpha)
+}
+
+fn document_color_from_egui(color: egui::Color32) -> DocumentColor {
+    let [r, g, b, a] = color.to_array();
+    DocumentColor::rgba(r, g, b, a)
 }
 
 /// Measures wrapped text in world units for the current zoom.
@@ -704,6 +830,123 @@ impl EpsilonApp {
         }
     }
 
+    /// Style controls applied to every selected element.
+    fn style_controls(ui: &mut egui::Ui, document: &mut Document, selected: &HashSet<ElementId>) {
+        let Some(first) = document
+            .elements
+            .iter()
+            .find(|element| selected.contains(&element.id))
+        else {
+            return;
+        };
+        let mut style = first.style;
+        let mut changed = false;
+
+        ui.horizontal(|ui| {
+            let mut stroke = document_color(style.stroke);
+            if ui.color_edit_button_srgba(&mut stroke).changed() {
+                style.stroke = document_color_from_egui(stroke);
+                changed = true;
+            }
+            ui.label("Stroke");
+        });
+        ui.horizontal(|ui| {
+            let mut fill = document_color(style.fill);
+            if ui.color_edit_button_srgba(&mut fill).changed() {
+                style.fill = document_color_from_egui(fill);
+                changed = true;
+            }
+            ui.label("Fill");
+        });
+        ui.horizontal(|ui| {
+            ui.label("Width");
+            if ui
+                .add(
+                    egui::DragValue::new(&mut style.stroke_width)
+                        .range(0.1..=30.0)
+                        .speed(0.1),
+                )
+                .changed()
+            {
+                changed = true;
+            }
+        });
+        ui.horizontal(|ui| {
+            ui.label("Opacity");
+            if ui
+                .add(egui::Slider::new(&mut style.opacity, 0.0..=1.0).show_value(false))
+                .changed()
+            {
+                changed = true;
+            }
+        });
+        ui.horizontal(|ui| {
+            ui.label("Stroke");
+            egui::ComboBox::from_id_salt("stroke_style")
+                .selected_text(format!("{:?}", style.stroke_style))
+                .show_ui(ui, |ui| {
+                    for option in [StrokeStyle::Solid, StrokeStyle::Dashed, StrokeStyle::Dotted] {
+                        if ui
+                            .selectable_value(
+                                &mut style.stroke_style,
+                                option,
+                                format!("{option:?}"),
+                            )
+                            .changed()
+                        {
+                            changed = true;
+                        }
+                    }
+                });
+        });
+        ui.horizontal(|ui| {
+            ui.label("Fill");
+            egui::ComboBox::from_id_salt("fill_style")
+                .selected_text(format!("{:?}", style.fill_style))
+                .show_ui(ui, |ui| {
+                    for option in [FillStyle::Solid, FillStyle::Hatch, FillStyle::CrossHatch] {
+                        if ui
+                            .selectable_value(&mut style.fill_style, option, format!("{option:?}"))
+                            .changed()
+                        {
+                            changed = true;
+                        }
+                    }
+                });
+        });
+        ui.horizontal(|ui| {
+            ui.label("Roundness");
+            if ui
+                .add(
+                    egui::DragValue::new(&mut style.roundness)
+                        .range(0.0..=64.0)
+                        .speed(0.5),
+                )
+                .changed()
+            {
+                changed = true;
+            }
+        });
+
+        if changed {
+            Self::apply_style_to_selection(document, selected, style);
+        }
+    }
+
+    fn apply_style_to_selection(
+        document: &mut Document,
+        selected: &HashSet<ElementId>,
+        style: epsilon_core::document::ElementStyle,
+    ) {
+        for element in document
+            .elements
+            .iter_mut()
+            .filter(|element| selected.contains(&element.id))
+        {
+            element.style = style;
+        }
+    }
+
     fn properties_panel(&mut self, ui: &mut egui::Ui) {
         // The resize range is fixed rather than derived from the current
         // window: transient small frames at startup would otherwise clamp and
@@ -732,13 +975,20 @@ impl EpsilonApp {
                 egui::CollapsingHeader::new("Selection")
                     .default_open(true)
                     .show(ui, |ui| {
-                        ui.vertical_centered(|ui| {
-                            ui.label(RichText::new("No selection").strong());
+                        if self.selected.is_empty() {
+                            ui.vertical_centered(|ui| {
+                                ui.label(RichText::new("No selection").strong());
+                                ui.add_space(4.0);
+                                ui.label(
+                                    RichText::new("Select an element to edit its properties.")
+                                        .weak(),
+                                );
+                            });
+                        } else {
+                            ui.label(format!("{} selected", self.selected.len()));
                             ui.add_space(4.0);
-                            ui.label(
-                                RichText::new("Select an element to edit its properties.").weak(),
-                            );
-                        });
+                            Self::style_controls(ui, &mut self.document, &self.selected);
+                        }
                     });
                 ui.add_space(4.0);
                 egui::CollapsingHeader::new("Canvas")
@@ -1365,67 +1615,67 @@ impl EpsilonApp {
     fn paint_document(&self, painter: &egui::Painter, canvas_rect: egui::Rect) {
         for element in self.document.paint_order() {
             let rect = element_screen_rect(canvas_rect, &self.viewport, element);
-            let fill = document_color(element.style.fill);
+            let opacity = element.style.opacity.clamp(0.0, 1.0);
+            let fill = document_color_with_opacity(element.style.fill, opacity);
             let stroke_width = (element.style.stroke_width * self.viewport.zoom).max(0.75) as f32;
-            let stroke = egui::Stroke::new(stroke_width, document_color(element.style.stroke));
+            let stroke = egui::Stroke::new(
+                stroke_width,
+                document_color_with_opacity(element.style.stroke, opacity),
+            );
+            let fill_style = element.style.fill_style;
+            let stroke_style = element.style.stroke_style;
+            let roundness = (element.style.roundness * self.viewport.zoom).max(0.0) as f32;
 
             match element.kind {
                 ElementKind::Rectangle => {
-                    if element.angle.abs() <= 1e-9 {
+                    let bounds =
+                        Rect::from_xywh(element.x, element.y, element.width, element.height);
+                    let corners = [
+                        bounds.min,
+                        Point::new(bounds.max.x, bounds.min.y),
+                        bounds.max,
+                        Point::new(bounds.min.x, bounds.max.y),
+                    ];
+                    let points =
+                        rotated_shape_screen_points(canvas_rect, &self.viewport, element, corners);
+                    let corner_radius = roundness.min(rect.width().min(rect.height()) * 0.5);
+                    if element.angle.abs() <= 1e-9 && fill_style == FillStyle::Solid {
                         if fill.a() > 0 {
-                            painter.rect_filled(rect, 0.0, fill);
+                            painter.rect_filled(rect, corner_radius, fill);
                         }
-                        painter.rect_stroke(rect, 0.0, stroke, egui::StrokeKind::Inside);
+                    } else if fill.a() > 0 {
+                        paint_fill_path(painter, &points, fill_style, fill);
+                    }
+                    if element.angle.abs() <= 1e-9 && stroke_style == StrokeStyle::Solid {
+                        painter.rect_stroke(rect, corner_radius, stroke, egui::StrokeKind::Inside);
                     } else {
-                        let bounds =
-                            Rect::from_xywh(element.x, element.y, element.width, element.height);
-                        let corners = [
-                            bounds.min,
-                            Point::new(bounds.max.x, bounds.min.y),
-                            bounds.max,
-                            Point::new(bounds.min.x, bounds.max.y),
-                        ];
-                        let points = rotated_shape_screen_points(
-                            canvas_rect,
-                            &self.viewport,
-                            element,
-                            corners,
-                        );
-                        if fill.a() > 0 {
-                            painter.add(egui::Shape::convex_polygon(
-                                points.clone(),
-                                fill,
-                                egui::Stroke::NONE,
-                            ));
-                        }
-                        painter.add(egui::Shape::closed_line(points, stroke));
+                        paint_stroke_path(painter, &points, true, stroke, stroke_style);
                     }
                 }
                 ElementKind::Ellipse => {
-                    if element.angle.abs() <= 1e-9 {
+                    let bounds =
+                        Rect::from_xywh(element.x, element.y, element.width, element.height);
+                    let points = rotated_shape_screen_points(
+                        canvas_rect,
+                        &self.viewport,
+                        element,
+                        ellipse_local_points(bounds),
+                    );
+                    if element.angle.abs() <= 1e-9 && fill_style == FillStyle::Solid {
                         let center = rect.center();
                         let radius = rect.size() / 2.0;
                         if fill.a() > 0 {
                             painter.add(egui::Shape::ellipse_filled(center, radius, fill));
                         }
+                    } else if fill.a() > 0 {
+                        paint_fill_path(painter, &points, fill_style, fill);
+                    }
+                    if element.angle.abs() <= 1e-9 && stroke_style == StrokeStyle::Solid {
+                        let center = rect.center();
+                        let radius = rect.size() / 2.0;
                         painter.add(egui::Shape::ellipse_stroke(center, radius, stroke));
                     } else {
-                        let bounds =
-                            Rect::from_xywh(element.x, element.y, element.width, element.height);
-                        let points = rotated_shape_screen_points(
-                            canvas_rect,
-                            &self.viewport,
-                            element,
-                            ellipse_local_points(bounds),
-                        );
-                        if fill.a() > 0 {
-                            painter.add(egui::Shape::convex_polygon(
-                                points.clone(),
-                                fill,
-                                egui::Stroke::NONE,
-                            ));
-                        }
-                        painter.add(egui::Shape::closed_line(points, stroke));
+                        paint_stroke_path(painter, &points, true, stroke, stroke_style);
                     }
                 }
                 ElementKind::Diamond => {
@@ -1438,44 +1688,36 @@ impl EpsilonApp {
                         bounds.diamond_points(),
                     );
                     if fill.a() > 0 {
-                        painter.add(egui::Shape::convex_polygon(
-                            points.clone(),
-                            fill,
-                            egui::Stroke::NONE,
-                        ));
+                        paint_fill_path(painter, &points, fill_style, fill);
                     }
-                    painter.add(egui::Shape::closed_line(points, stroke));
+                    paint_stroke_path(painter, &points, true, stroke, stroke_style);
                 }
                 ElementKind::Line => {
                     if let [start, end] = element.points.as_slice() {
-                        painter.line_segment(
-                            [
-                                world_to_screen_pos(
-                                    canvas_rect,
-                                    &self.viewport,
-                                    element_world_point(element, *start),
-                                ),
-                                world_to_screen_pos(
-                                    canvas_rect,
-                                    &self.viewport,
-                                    element_world_point(element, *end),
-                                ),
-                            ],
-                            stroke,
-                        );
+                        let points = vec![
+                            world_to_screen_pos(
+                                canvas_rect,
+                                &self.viewport,
+                                element_world_point(element, *start),
+                            ),
+                            world_to_screen_pos(
+                                canvas_rect,
+                                &self.viewport,
+                                element_world_point(element, *end),
+                            ),
+                        ];
+                        paint_stroke_path(painter, &points, false, stroke, stroke_style);
                     }
                 }
                 ElementKind::Arrow => {
                     if let [start, end] = element.points.as_slice() {
                         let start = element_world_point(element, *start);
                         let end = element_world_point(element, *end);
-                        painter.line_segment(
-                            [
-                                world_to_screen_pos(canvas_rect, &self.viewport, start),
-                                world_to_screen_pos(canvas_rect, &self.viewport, end),
-                            ],
-                            stroke,
-                        );
+                        let points = vec![
+                            world_to_screen_pos(canvas_rect, &self.viewport, start),
+                            world_to_screen_pos(canvas_rect, &self.viewport, end),
+                        ];
+                        paint_stroke_path(painter, &points, false, stroke, stroke_style);
                         if let Some(head) =
                             arrowhead_screen_points(canvas_rect, &self.viewport, start, end)
                         {
@@ -1499,13 +1741,11 @@ impl EpsilonApp {
                             )
                         })
                         .collect();
-                    if points.len() >= 2 {
-                        painter.add(egui::Shape::line(points, stroke));
-                    }
+                    paint_stroke_path(painter, &points, false, stroke, stroke_style);
                 }
                 ElementKind::Text => {
                     if !element.text.is_empty() {
-                        let color = document_color(element.style.stroke);
+                        let color = document_color_with_opacity(element.style.stroke, opacity);
                         let font_id = egui::FontId::proportional(
                             (element.font_size * self.viewport.zoom).max(1.0) as f32,
                         );
@@ -2175,6 +2415,54 @@ mod tests {
             drawing_end(ElementKind::Arrow, start, end, true),
             constrained
         );
+    }
+
+    #[test]
+    fn styled_elements_render_headlessly() {
+        let ctx = egui::Context::default();
+        theme::apply(&ctx, Theme::Dark);
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1000.0, 700.0));
+        let mut app = EpsilonApp::default();
+        let mut rectangle = Element::new(ElementKind::Rectangle, 10.0, 10.0, 80.0, 60.0);
+        rectangle.style.fill = DocumentColor::rgb(40, 120, 200);
+        rectangle.style.fill_style = FillStyle::CrossHatch;
+        rectangle.style.stroke_style = StrokeStyle::Dashed;
+        rectangle.style.roundness = 8.0;
+        app.document.add(rectangle);
+        let mut ellipse = Element::new(ElementKind::Ellipse, 120.0, 10.0, 80.0, 60.0);
+        ellipse.style.fill = DocumentColor::rgb(200, 80, 40);
+        ellipse.style.fill_style = FillStyle::Hatch;
+        ellipse.style.stroke_style = StrokeStyle::Dotted;
+        ellipse.style.opacity = 0.5;
+        app.document.add(ellipse);
+        let mut line = Element::line(Point::new(10.0, 100.0), Point::new(200.0, 150.0));
+        line.style.stroke_style = StrokeStyle::Dashed;
+        app.document.add(line);
+
+        run_app_frame(&mut app, &ctx, screen, Vec::new());
+        assert_eq!(app.document.elements.len(), 3);
+    }
+
+    #[test]
+    fn style_changes_apply_to_every_selected_element() {
+        let mut app = EpsilonApp::default();
+        let first = app
+            .document
+            .add(Element::new(ElementKind::Rectangle, 0.0, 0.0, 10.0, 10.0));
+        let second = app
+            .document
+            .add(Element::new(ElementKind::Ellipse, 20.0, 0.0, 10.0, 10.0));
+        app.selected.extend([first, second]);
+        let mut style = app.document.elements[0].style;
+        style.stroke = DocumentColor::rgb(200, 20, 40);
+        style.fill = DocumentColor::rgb(40, 120, 200);
+        style.stroke_style = StrokeStyle::Dotted;
+        style.fill_style = FillStyle::Hatch;
+
+        EpsilonApp::apply_style_to_selection(&mut app.document, &app.selected, style);
+
+        assert_eq!(app.document.element(first).expect("first").style, style);
+        assert_eq!(app.document.element(second).expect("second").style, style);
     }
 
     #[test]

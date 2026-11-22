@@ -4,6 +4,12 @@ Notable changes, newest first. Version sections are added at release time.
 
 ## [Unreleased]
 
+### Added — 2026-11-23 (task 3.12)
+
+- Full element styling: colors, width, opacity, dashed/dotted strokes,
+  solid/hatch/cross-hatch fills and rectangle roundness.
+- Selection style controls with multi-element application.
+
 ### Added — 2026-11-23 (task 3.11)
 
 - Rotation handle with 15-degree Shift snapping and collective multi-element

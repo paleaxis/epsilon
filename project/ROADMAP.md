@@ -383,13 +383,21 @@ bounds center. Rotated shapes render from projected rotated polygons; rotated
 selections keep eight usable screen-space resize handles. Core and app tests
 cover angle snapping, collective rotation and rotated handle bounds.
 
-### [ ] 3.12 — Styling system
+### [x] 3.12 — Styling system
 
 Stroke/fill colors, stroke width, opacity, stroke style (solid/dashed/dotted),
 fill style (solid/hatch/cross-hatch), roundness.
 
 Acceptance: styles in document model with round-trip tests; rendering verified;
 style changes apply to selection.
+
+Completed 2026-11-23: element styles now include stroke/fill colors, width,
+opacity, solid/dashed/dotted strokes, solid/hatch/cross-hatch fills and corner
+roundness. Rendering applies opacity, dashed/dotted paths, hatch scanlines and
+rounded rectangles. The properties panel edits the style of the current
+selection, applying changes to every selected element. Serialization covers the
+new fields with legacy defaults, and headless rendering exercises all style
+paths.
 
 ### [ ] 3.13 — Hand-drawn rendering
 
