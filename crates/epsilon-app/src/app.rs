@@ -1,6 +1,7 @@
 use eframe::egui::{self, Align, Layout, RichText};
 
 use crate::layout;
+use crate::theme::{self, Theme};
 
 /// Root application object and native shell.
 ///
@@ -10,11 +11,21 @@ use crate::layout;
 #[derive(Default)]
 pub struct EpsilonApp {
     about_open: bool,
+    theme: Theme,
 }
 
 impl EpsilonApp {
-    pub fn new(_cc: &eframe::CreationContext<'_>) -> Self {
-        Self::default()
+    pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
+        let app = Self::default();
+        theme::apply(&cc.egui_ctx, app.theme);
+        app
+    }
+
+    fn set_theme(&mut self, ctx: &egui::Context, theme: Theme) {
+        if self.theme != theme {
+            self.theme = theme;
+            theme::apply(ctx, theme);
+        }
     }
 
     fn menu_bar(&mut self, ui: &mut egui::Ui) {
@@ -30,6 +41,12 @@ impl EpsilonApp {
                         ui.separator();
                         if ui.button("Quit").clicked() {
                             ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+                        }
+                    });
+                    ui.menu_button("View", |ui| {
+                        let mut dark = self.theme == Theme::Dark;
+                        if ui.checkbox(&mut dark, "Dark mode").changed() {
+                            self.set_theme(ui.ctx(), if dark { Theme::Dark } else { Theme::Light });
                         }
                     });
                 });
@@ -157,10 +174,14 @@ mod tests {
 
     /// Renders one shell frame into a headless egui context of the given size
     /// and returns the canvas rect plus the full screen rect.
-    fn layout_at(width: f32, height: f32) -> (egui::Rect, egui::Rect) {
+    fn layout_at(width: f32, height: f32, theme: Theme) -> (egui::Rect, egui::Rect) {
         let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(width, height));
         let ctx = egui::Context::default();
-        let mut app = EpsilonApp::default();
+        theme::apply(&ctx, theme);
+        let mut app = EpsilonApp {
+            theme,
+            ..Default::default()
+        };
         let mut canvas = None;
 
         let output = ctx.run_ui(
@@ -175,8 +196,8 @@ mod tests {
         (canvas.expect("shell layout runs one frame"), screen)
     }
 
-    fn assert_shell_fits(width: f32, height: f32) {
-        let (canvas, screen) = layout_at(width, height);
+    fn assert_shell_fits(width: f32, height: f32, theme: Theme) {
+        let (canvas, screen) = layout_at(width, height, theme);
         let tolerance = 1.0;
 
         assert!(
@@ -209,11 +230,37 @@ mod tests {
     #[test]
     fn shell_fits_minimum_window() {
         let [width, height] = layout::MIN_WINDOW_SIZE;
-        assert_shell_fits(width, height);
+        assert_shell_fits(width, height, Theme::Dark);
     }
 
     #[test]
     fn shell_fits_large_window() {
-        assert_shell_fits(1920.0, 1080.0);
+        assert_shell_fits(1920.0, 1080.0, Theme::Dark);
+    }
+
+    #[test]
+    fn switching_theme_updates_context_immediately() {
+        let mut app = EpsilonApp::default();
+        let ctx = egui::Context::default();
+        theme::apply(&ctx, app.theme);
+
+        app.set_theme(&ctx, Theme::Light);
+        assert_eq!(app.theme, Theme::Light);
+        assert_eq!(ctx.theme(), egui::Theme::Light);
+        assert!(!ctx.style_of(egui::Theme::Light).visuals.dark_mode);
+
+        app.set_theme(&ctx, Theme::Dark);
+        assert_eq!(app.theme, Theme::Dark);
+        assert!(ctx.style_of(egui::Theme::Dark).visuals.dark_mode);
+    }
+
+    #[test]
+    fn shell_renders_in_light_theme() {
+        assert_shell_fits(1920.0, 1080.0, Theme::Light);
+        assert_shell_fits(
+            layout::MIN_WINDOW_SIZE[0],
+            layout::MIN_WINDOW_SIZE[1],
+            Theme::Light,
+        );
     }
 }

@@ -4,6 +4,16 @@ Notable changes, newest first. Version sections are added at release time.
 
 ## [Unreleased]
 
+### Added — 2026-11-22 (task 1.2)
+
+- Dark and light themes driven by a central semantic palette in `theme.rs`.
+- View → "Dark mode" toggle that applies the new theme immediately; all shell
+  regions follow the active `egui::Visuals`.
+- Explicit theme preference, so the OS theme cannot override the in-app choice;
+  default theme is dark.
+- WCAG contrast unit tests (primary text ≥ 7:1, weak text ≥ 4.5:1 against panel
+  and canvas) and theme application/headless shell tests for both themes.
+
 ### Added — 2026-11-22 (task 1.1)
 
 - Six-region native shell: menu bar, top toolbar, left tool rail, canvas region,

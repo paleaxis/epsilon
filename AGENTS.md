@@ -50,6 +50,9 @@ that is explicitly out of scope until the whiteboard is genuinely usable.
 - `unsafe` is forbidden via crate lints. Do not add crate-level lint suppressions
   to evade this.
 - Follow `rustfmt`; keep clippy clean for touched code.
+- All UI colors come from `epsilon-app/src/theme.rs`. Widgets read
+  `egui::Visuals`; do not hard-code `Color32` values in shell/widget code. Keep
+  the palette contrast tests passing when changing colors.
 - Comments explain *why*, not *what*. Do not leave dead code, stub UIs, or
   placeholder features presented as complete.
 

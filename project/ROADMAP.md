@@ -42,13 +42,17 @@ Completed 2026-11-22: six regions implemented with compile-time size budgets,
 headless layout tests at both sizes, native launch verified. Tool content,
 menus, themes and live readouts remain in 1.2–1.6.
 
-### [ ] 1.2 — Theme system (dark / light)
+### [x] 1.2 — Theme system (dark / light)
 
 Central palette/`egui::Visuals` setup; View menu toggle; all regions follow the
 theme with legible contrast.
 
 Acceptance: switching themes updates the whole shell immediately; no hard-coded
 colors remain in shell widgets; manual launch check.
+
+Completed 2026-11-22: semantic dark/light palettes in `theme.rs` applied via an
+explicit `ThemePreference`; View → Dark mode toggle; contrast tests (7:1 primary,
+4.5:1 weak); headless shell layout verified in both themes; native launch alive.
 
 ### [ ] 1.3 — Tool model and left tool panel
 

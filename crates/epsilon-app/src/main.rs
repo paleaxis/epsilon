@@ -2,6 +2,7 @@
 
 mod app;
 mod layout;
+mod theme;
 
 fn main() -> eframe::Result {
     let options = eframe::NativeOptions {

@@ -194,3 +194,25 @@ No browser or screenshot tooling is involved.
 updating `layout.rs`; the compiler rejects inconsistent budgets. Headless UI
 layout tests with real egui fonts are available for later shell tasks, while
 purely visual qualities still need a manual native check.
+
+---
+
+## D-011 — Central semantic palette with explicit theme preference (2026-11-22)
+
+**Context.** Stage 1 needs dark and light themes, switchable at runtime, with
+legible contrast and no per-widget color decisions scattered through the UI.
+Eframe/egui can follow the OS theme, which would fight an in-app toggle.
+
+**Decision.** `crates/epsilon-app/src/theme.rs` owns two `Palette` values with
+identical semantic slots (canvas, panel, window, border, faint, widget states,
+text, weak text, accent). `Theme::visuals()` builds `egui::Visuals` from them.
+`theme::apply()` sets an explicit `ThemePreference` (never `System`) and then
+the palette, so OS theme changes cannot override the user's choice. The shell
+reads colors only through `Visuals`; the canvas uses `extreme_bg_color`. Default
+theme is dark. Contrast is enforced by tests: primary text ≥ 7:1 and weak text
+≥ 4.5:1 against both panel and canvas (WCAG AA/AAA for normal text).
+
+**Consequences.** New widgets automatically match the theme; adding a third
+theme means adding one `Palette` value. The theme is not persisted yet (task 1.8),
+so every launch starts dark. Alpha-blended accent colours were avoided so the
+contrast tests stay meaningful.
