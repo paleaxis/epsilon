@@ -11,6 +11,7 @@ use epsilon_core::geometry::{
     rough_polyline, simplify_polyline, smooth_polyline, snap_angle,
 };
 use epsilon_core::grid;
+use epsilon_core::history::{History, Transaction};
 use epsilon_core::viewport::Viewport;
 
 use crate::layout;
@@ -514,6 +515,12 @@ pub struct EpsilonApp {
     viewport: Viewport,
     /// In-memory document being edited.
     document: Document,
+    /// Reversible edit history for the document.
+    history: History,
+    /// Last failed history operation, shown in the status bar.
+    history_error: Option<String>,
+    /// Selection snapshot captured before a continuous properties edit.
+    property_edit_before: Option<Vec<Element>>,
     /// Last pointer position in world coordinates, if the pointer is over the
     /// canvas. Drives the status-bar readout.
     pointer_world: Option<Point>,
@@ -531,6 +538,8 @@ pub struct EpsilonApp {
     freehand_points: Vec<Point>,
     /// Element currently open in the in-canvas text editor.
     editing_text: Option<ElementId>,
+    /// Whether the edited text element has not been committed to history yet.
+    editing_text_is_new: bool,
     text_buffer: String,
     text_editor_needs_focus: bool,
     /// Elements currently selected in the canvas.
@@ -553,6 +562,9 @@ impl Default for EpsilonApp {
             help_open: false,
             viewport: Viewport::default(),
             document: Document::default(),
+            history: History::default(),
+            history_error: None,
+            property_edit_before: None,
             pointer_world: None,
             canvas_rect: egui::Rect::NOTHING,
             grid_enabled: false,
@@ -561,6 +573,7 @@ impl Default for EpsilonApp {
             hover_screen: None,
             freehand_points: Vec::new(),
             editing_text: None,
+            editing_text_is_new: false,
             text_buffer: String::new(),
             text_editor_needs_focus: false,
             selected: HashSet::new(),
@@ -581,6 +594,8 @@ enum Action {
     ZoomOut,
     ZoomReset,
     ZoomFit,
+    Undo,
+    Redo,
 }
 
 /// One entry in the central shortcut registry.
@@ -659,6 +674,31 @@ const KEYBINDINGS: &[KeyBinding] = &[
         modifiers: egui::Modifiers::NONE,
         action: Action::SelectTool(Tool::Text),
         description: "Text tool",
+    },
+    KeyBinding {
+        shortcut: "Ctrl+Z",
+        key: egui::Key::Z,
+        modifiers: egui::Modifiers::COMMAND,
+        action: Action::Undo,
+        description: "Undo",
+    },
+    KeyBinding {
+        shortcut: "Ctrl+Shift+Z",
+        key: egui::Key::Z,
+        modifiers: egui::Modifiers {
+            shift: true,
+            command: true,
+            ..egui::Modifiers::NONE
+        },
+        action: Action::Redo,
+        description: "Redo",
+    },
+    KeyBinding {
+        shortcut: "Ctrl+Y",
+        key: egui::Key::Y,
+        modifiers: egui::Modifiers::COMMAND,
+        action: Action::Redo,
+        description: "Redo",
     },
     KeyBinding {
         shortcut: "F1",
@@ -758,6 +798,154 @@ impl EpsilonApp {
         self.set_theme(ctx, next);
     }
 
+    /// Undo is unavailable while a text element is being edited, because its
+    /// creation is recorded when the editor commits.
+    fn can_undo(&self) -> bool {
+        self.editing_text.is_none() && self.history.can_undo()
+    }
+
+    fn can_redo(&self) -> bool {
+        self.editing_text.is_none() && self.history.can_redo()
+    }
+
+    fn commit_transaction(&mut self, transaction: Transaction) -> bool {
+        match self.history.commit(&mut self.document, transaction) {
+            Ok(()) => {
+                self.history_error = None;
+                true
+            }
+            Err(error) => {
+                self.history_error = Some(format!("Edit failed: {error}"));
+                false
+            }
+        }
+    }
+
+    /// Inserts a new element through history, assigning it the next z-order.
+    fn insert_element(&mut self, mut element: Element) -> Option<ElementId> {
+        element.z_order = self.document.next_z_order();
+        let id = element.id;
+        let index = self.document.elements.len();
+        self.commit_transaction(Transaction::insert(index, vec![element]))
+            .then_some(id)
+    }
+
+    /// History is unavailable while an edit is still in flight: the text editor
+    /// records on commit, and drag snapshots must finish before they can be
+    /// reverted or the next frame would reapply them.
+    fn history_blocked(&self) -> bool {
+        self.editing_text.is_some()
+            || !matches!(self.pointer_mode, PointerMode::Idle)
+            || self.property_edit_before.is_some()
+    }
+
+    fn undo(&mut self) -> bool {
+        if self.history_blocked() {
+            return false;
+        }
+        match self.history.undo(&mut self.document) {
+            Ok(changed) => {
+                if changed {
+                    self.history_error = None;
+                    self.prune_after_history();
+                }
+                changed
+            }
+            Err(error) => {
+                self.history_error = Some(format!("Undo failed: {error}"));
+                false
+            }
+        }
+    }
+
+    fn redo(&mut self) -> bool {
+        if self.history_blocked() {
+            return false;
+        }
+        match self.history.redo(&mut self.document) {
+            Ok(changed) => {
+                if changed {
+                    self.history_error = None;
+                    self.prune_after_history();
+                }
+                changed
+            }
+            Err(error) => {
+                self.history_error = Some(format!("Redo failed: {error}"));
+                false
+            }
+        }
+    }
+
+    /// Drops selection and editor references to elements history removed.
+    fn prune_after_history(&mut self) {
+        self.selected
+            .retain(|id| self.document.element(*id).is_some());
+        if let Some(id) = self.editing_text
+            && self.document.element(id).is_none()
+        {
+            self.editing_text = None;
+            self.editing_text_is_new = false;
+            self.text_buffer.clear();
+            self.text_editor_needs_focus = false;
+        }
+    }
+
+    /// Records the net effect of a finished move, resize or rotation drag.
+    fn finish_transform(&mut self) {
+        let originals = std::mem::take(&mut self.transform_original);
+        if originals.is_empty() {
+            return;
+        }
+
+        let mut before = Vec::new();
+        let mut after = Vec::new();
+        for original in originals {
+            let Some(current) = self.document.element(original.id) else {
+                continue;
+            };
+            if current != &original {
+                before.push(original);
+                after.push(current.clone());
+            }
+        }
+        if before.is_empty() {
+            return;
+        }
+
+        match Transaction::replace(before, after) {
+            Ok(transaction) => {
+                self.commit_transaction(transaction);
+            }
+            Err(error) => self.history_error = Some(format!("Edit failed: {error}")),
+        }
+    }
+
+    /// Records a finished properties-panel edit against its before snapshot.
+    fn commit_property_edit(&mut self, before: Vec<Element>) {
+        let mut originals = Vec::new();
+        let mut after = Vec::new();
+        for original in before {
+            let Some(current) = self.document.element(original.id) else {
+                continue;
+            };
+            if current != &original {
+                originals.push(original);
+                after.push(current.clone());
+            }
+        }
+        if originals.is_empty() {
+            return;
+        }
+
+        match Transaction::replace(originals, after) {
+            Ok(transaction) => {
+                self.commit_transaction(transaction);
+            }
+            Err(error) => self.history_error = Some(format!("Edit failed: {error}")),
+        }
+    }
+
     /// The single theme control used by both the View menu and the toolbar.
     fn theme_toggle(&mut self, ui: &mut egui::Ui) {
         let mut dark = self.theme == Theme::Dark;
@@ -776,6 +964,28 @@ impl EpsilonApp {
                     ui.menu_button("File", |ui| {
                         if ui.button("Quit").clicked() {
                             request_quit(ui.ctx());
+                        }
+                    });
+                    ui.menu_button("Edit", |ui| {
+                        if ui
+                            .add_enabled(
+                                self.can_undo(),
+                                egui::Button::new("Undo").shortcut_text("Ctrl+Z"),
+                            )
+                            .clicked()
+                        {
+                            self.undo();
+                            ui.close();
+                        }
+                        if ui
+                            .add_enabled(
+                                self.can_redo(),
+                                egui::Button::new("Redo").shortcut_text("Ctrl+Shift+Z"),
+                            )
+                            .clicked()
+                        {
+                            self.redo();
+                            ui.close();
                         }
                     });
                     ui.menu_button("View", |ui| {
@@ -813,6 +1023,18 @@ impl EpsilonApp {
                         }
                         self.theme_toggle(ui);
                         ui.label(RichText::new(concat!("v", env!("CARGO_PKG_VERSION"))).weak());
+                        if ui
+                            .add_enabled(self.can_undo(), egui::Button::new("Undo"))
+                            .clicked()
+                        {
+                            self.undo();
+                        }
+                        if ui
+                            .add_enabled(self.can_redo(), egui::Button::new("Redo"))
+                            .clicked()
+                        {
+                            self.redo();
+                        }
 
                         let anchor = if self.canvas_rect == egui::Rect::NOTHING {
                             Point::new(0.0, 0.0)
@@ -860,12 +1082,10 @@ impl EpsilonApp {
     }
 
     /// Applies registered keyboard shortcuts, unless a widget currently owns
-    /// keyboard input (a text field, for example).
+    /// keyboard input (a text field, for example). Undo and redo stay available
+    /// when a properties field has focus, but not while canvas text is edited.
     fn handle_shortcuts(&mut self, ctx: &egui::Context, canvas_rect: egui::Rect) {
-        if ctx.egui_wants_keyboard_input() {
-            return;
-        }
-
+        let wants_keyboard = ctx.egui_wants_keyboard_input();
         let events: Vec<egui::Event> = ctx.input(|input| input.events.clone());
         for event in events {
             let egui::Event::Key {
@@ -878,11 +1098,26 @@ impl EpsilonApp {
                 continue;
             };
 
+            let binding = KEYBINDINGS
+                .iter()
+                .find(|binding| binding.key == key && modifiers.matches_exact(binding.modifiers));
+
+            if wants_keyboard {
+                // A focused widget (a DragValue, for example) would otherwise
+                // swallow the undo shortcut. The canvas text editor keeps its
+                // own undo stack, so document history stays out of its way.
+                if !self.help_open
+                    && self.editing_text.is_none()
+                    && let Some(binding) = binding
+                    && matches!(binding.action, Action::Undo | Action::Redo)
+                {
+                    self.perform_action(binding.action, pointer_anchor(ctx, canvas_rect));
+                }
+                continue;
+            }
+
             // Help overlay toggles and closes are handled even while it is open.
             if key == egui::Key::F1 || key == egui::Key::Questionmark {
-                let binding = KEYBINDINGS
-                    .iter()
-                    .find(|binding| binding.key == key && binding.modifiers == modifiers);
                 if binding.is_some() {
                     self.help_open = !self.help_open;
                 }
@@ -898,23 +1133,25 @@ impl EpsilonApp {
                 continue;
             }
 
-            if modifiers.ctrl || modifiers.alt || modifiers.command {
-                continue;
+            if let Some(binding) = binding {
+                self.perform_action(binding.action, pointer_anchor(ctx, canvas_rect));
             }
+        }
+    }
 
-            if let Some(binding) = KEYBINDINGS
-                .iter()
-                .find(|binding| binding.key == key && binding.modifiers == modifiers)
-            {
-                let anchor = pointer_anchor(ctx, canvas_rect);
-                match binding.action {
-                    Action::SelectTool(tool) => self.tool = tool,
-                    Action::ToggleHelp => self.help_open = !self.help_open,
-                    Action::ZoomIn => self.viewport.zoom_by(1.25, anchor),
-                    Action::ZoomOut => self.viewport.zoom_by(0.8, anchor),
-                    Action::ZoomReset => self.viewport = Viewport::default(),
-                    Action::ZoomFit => self.viewport = Viewport::default(),
-                }
+    fn perform_action(&mut self, action: Action, anchor: Point) {
+        match action {
+            Action::SelectTool(tool) => self.tool = tool,
+            Action::ToggleHelp => self.help_open = !self.help_open,
+            Action::ZoomIn => self.viewport.zoom_by(1.25, anchor),
+            Action::ZoomOut => self.viewport.zoom_by(0.8, anchor),
+            Action::ZoomReset => self.viewport = Viewport::default(),
+            Action::ZoomFit => self.viewport = Viewport::default(),
+            Action::Undo => {
+                self.undo();
+            }
+            Action::Redo => {
+                self.redo();
             }
         }
     }
@@ -1025,10 +1262,11 @@ impl EpsilonApp {
         ui: &mut egui::Ui,
         document: &mut Document,
         selected: &HashSet<ElementId>,
-    ) {
+    ) -> bool {
         let Some(properties) = Self::selection_properties(document, selected) else {
-            return;
+            return false;
         };
+        let mut changed = false;
         let first = document
             .elements
             .iter()
@@ -1056,6 +1294,7 @@ impl EpsilonApp {
                 "",
             ) {
                 Self::set_selection_x(document, selected, value);
+                changed = true;
             }
             if let Some(value) = scalar_field(
                 ui,
@@ -1067,6 +1306,7 @@ impl EpsilonApp {
                 "",
             ) {
                 Self::set_selection_y(document, selected, value);
+                changed = true;
             }
         });
         ui.horizontal(|ui| {
@@ -1080,6 +1320,7 @@ impl EpsilonApp {
                 "",
             ) {
                 Self::set_selection_width(document, selected, value);
+                changed = true;
             }
             if let Some(value) = scalar_field(
                 ui,
@@ -1091,6 +1332,7 @@ impl EpsilonApp {
                 "",
             ) {
                 Self::set_selection_height(document, selected, value);
+                changed = true;
             }
         });
         ui.horizontal(|ui| {
@@ -1104,13 +1346,19 @@ impl EpsilonApp {
                 "°",
             ) {
                 Self::set_selection_angle(document, selected, value);
+                changed = true;
             }
         });
         ui.add_space(4.0);
+        changed
     }
 
     /// Style controls applied to every selected element.
-    fn style_controls(ui: &mut egui::Ui, document: &mut Document, selected: &HashSet<ElementId>) {
+    fn style_controls(
+        ui: &mut egui::Ui,
+        document: &mut Document,
+        selected: &HashSet<ElementId>,
+    ) -> bool {
         let styles: Vec<epsilon_core::document::ElementStyle> = document
             .elements
             .iter()
@@ -1118,7 +1366,7 @@ impl EpsilonApp {
             .map(|element| element.style)
             .collect();
         let Some(&first_style) = styles.first() else {
-            return;
+            return false;
         };
         let mut style = first_style;
         let mut changed = false;
@@ -1250,6 +1498,7 @@ impl EpsilonApp {
         if changed {
             Self::apply_style_to_selection(document, selected, style);
         }
+        changed
     }
 
     fn apply_style_to_selection(
@@ -1275,11 +1524,14 @@ impl EpsilonApp {
         // without losing the persisted width.
         let mut hide_requested = false;
         let mut grid = self.grid_enabled;
+        // Keep the open flag local so the panel closure can borrow `self` for
+        // document edits without conflicting with the flag's mutable borrow.
+        let mut properties_open = self.properties_open;
         egui::Panel::right("properties_panel")
             .resizable(true)
             .default_size(layout::PROPERTIES_PANEL_WIDTH)
             .size_range(layout::PROPERTIES_PANEL_MIN_WIDTH..=layout::PROPERTIES_PANEL_MAX_WIDTH)
-            .show_collapsible(ui, &mut self.properties_open, |ui| {
+            .show_collapsible(ui, &mut properties_open, |ui| {
                 ui.add_space(4.0);
                 ui.horizontal(|ui| {
                     ui.label(RichText::new("PROPERTIES").small().strong());
@@ -1291,6 +1543,8 @@ impl EpsilonApp {
                 });
                 ui.separator();
                 ui.add_space(4.0);
+                let mut property_changed = false;
+                let mut property_before = Vec::new();
                 egui::CollapsingHeader::new("Selection")
                     .default_open(true)
                     .show(ui, |ui| {
@@ -1306,8 +1560,11 @@ impl EpsilonApp {
                         } else {
                             ui.label(format!("{} selected", self.selected.len()));
                             ui.add_space(4.0);
-                            Self::transform_controls(ui, &mut self.document, &self.selected);
-                            Self::style_controls(ui, &mut self.document, &self.selected);
+                            property_before = self.selected_snapshots();
+                            property_changed =
+                                Self::transform_controls(ui, &mut self.document, &self.selected);
+                            property_changed |=
+                                Self::style_controls(ui, &mut self.document, &self.selected);
                         }
                     });
                 ui.add_space(4.0);
@@ -1316,7 +1573,27 @@ impl EpsilonApp {
                     .show(ui, |ui| {
                         ui.checkbox(&mut grid, "Show grid");
                     });
+
+                // Continuous widget drags mutate the document every frame.
+                // Hold the pre-edit snapshot until the pointer is released so
+                // one interaction becomes one history entry.
+                let pointer_down = ui.ctx().input(|input| input.pointer.any_down());
+                if property_changed {
+                    let before = self.property_edit_before.take().unwrap_or(property_before);
+                    if pointer_down {
+                        self.property_edit_before = Some(before);
+                    } else {
+                        self.commit_property_edit(before);
+                    }
+                } else if let Some(before) = self.property_edit_before.take() {
+                    if pointer_down {
+                        self.property_edit_before = Some(before);
+                    } else {
+                        self.commit_property_edit(before);
+                    }
+                }
             });
+        self.properties_open = properties_open;
         if hide_requested {
             self.properties_open = false;
         }
@@ -1573,8 +1850,8 @@ impl EpsilonApp {
                     self.apply_move_delta(current - start);
                     self.pointer_mode = PointerMode::Moving { start, current };
                 } else {
+                    self.finish_transform();
                     self.pointer_mode = PointerMode::Idle;
-                    self.transform_original.clear();
                 }
             }
             PointerMode::Resizing { handle } => {
@@ -1593,8 +1870,8 @@ impl EpsilonApp {
                     }
                     self.pointer_mode = PointerMode::Resizing { handle };
                 } else {
+                    self.finish_transform();
                     self.pointer_mode = PointerMode::Idle;
-                    self.transform_original.clear();
                 }
             }
             PointerMode::Rotating => {
@@ -1611,8 +1888,8 @@ impl EpsilonApp {
                     }
                     self.pointer_mode = PointerMode::Rotating;
                 } else {
+                    self.finish_transform();
                     self.pointer_mode = PointerMode::Idle;
-                    self.transform_original.clear();
                 }
             }
             _ => {}
@@ -1798,6 +2075,7 @@ impl EpsilonApp {
             element.style.stroke = self.default_stroke();
             let id = self.document.add(element);
             self.editing_text = Some(id);
+            self.editing_text_is_new = true;
             self.text_buffer.clear();
             self.text_editor_needs_focus = true;
             return;
@@ -1820,7 +2098,7 @@ impl EpsilonApp {
             _ => Element::new(kind, rect.min.x, rect.min.y, rect.width(), rect.height()),
         };
         element.style.stroke = self.default_stroke();
-        self.document.add(element);
+        self.insert_element(element);
     }
 
     fn default_stroke(&self) -> DocumentColor {
@@ -1889,25 +2167,55 @@ impl EpsilonApp {
         let Some(id) = self.editing_text.take() else {
             return;
         };
+        let was_new = std::mem::take(&mut self.editing_text_is_new);
         let text = std::mem::take(&mut self.text_buffer);
         self.text_editor_needs_focus = false;
 
+        let Some(index) = self
+            .document
+            .elements
+            .iter()
+            .position(|element| element.id == id)
+        else {
+            return;
+        };
+        let before = self.document.elements[index].clone();
+
         if text.trim().is_empty() {
-            self.document.remove(id);
+            if was_new {
+                // Nothing was committed, so the aborted text leaves no entry.
+                self.document.elements.remove(index);
+            } else if let Ok(transaction) = Transaction::remove(&self.document, &[id]) {
+                self.commit_transaction(transaction);
+            } else {
+                self.history_error = Some("Could not remove empty text".to_owned());
+            }
             return;
         }
 
         let zoom = self.viewport.zoom;
-        if let Some(element) = self
-            .document
-            .elements
-            .iter_mut()
-            .find(|element| element.id == id)
-        {
-            element.height =
-                measured_text_height(ctx, &text, element.font_size, element.width, zoom);
-            element.text = text;
-            element.version = element.version.saturating_add(1);
+        let mut after = before.clone();
+        after.height = measured_text_height(ctx, &text, after.font_size, after.width, zoom);
+        after.text = text;
+        after.version = after.version.saturating_add(1);
+
+        if was_new {
+            // The element existed only for editing; record its creation once
+            // with the final content and measured height. The insert command
+            // requires the element to be absent, so remove it first and put it
+            // back if the commit is rejected.
+            self.document.elements.remove(index);
+            let transaction = Transaction::insert(index, vec![after.clone()]);
+            if !self.commit_transaction(transaction) {
+                self.document.elements.insert(index, after);
+            }
+        } else if after != before {
+            match Transaction::replace(vec![before], vec![after]) {
+                Ok(transaction) => {
+                    self.commit_transaction(transaction);
+                }
+                Err(error) => self.history_error = Some(format!("Edit failed: {error}")),
+            }
         }
     }
 
@@ -1927,7 +2235,7 @@ impl EpsilonApp {
         }
         if let Some(mut element) = Element::freehand(points) {
             element.style.stroke = self.default_stroke();
-            self.document.add(element);
+            self.insert_element(element);
         }
     }
 
@@ -2305,6 +2613,24 @@ impl EpsilonApp {
                         .small()
                         .weak(),
                     );
+                    ui.add_space(12.0);
+                    ui.label(
+                        RichText::new(format!(
+                            "Undo: {} · Redo: {}",
+                            self.history.undo_len(),
+                            self.history.redo_len()
+                        ))
+                        .small()
+                        .weak(),
+                    );
+                    if let Some(error) = &self.history_error {
+                        ui.add_space(12.0);
+                        ui.label(
+                            RichText::new(error)
+                                .small()
+                                .color(ui.visuals().error_fg_color),
+                        );
+                    }
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         ui.label(
                             RichText::new(concat!("Epsilon ", env!("CARGO_PKG_VERSION"))).weak(),
@@ -3563,6 +3889,196 @@ mod tests {
                 tool.name()
             );
         }
+    }
+
+    fn redo_shortcut_modifiers() -> egui::Modifiers {
+        egui::Modifiers {
+            shift: true,
+            command: true,
+            ..egui::Modifiers::NONE
+        }
+    }
+
+    #[test]
+    fn shape_creation_is_undoable_and_redoable_with_shortcuts() {
+        let mut app = drag_shape_on_canvas(Tool::Rectangle);
+        assert_eq!(app.document.elements.len(), 1);
+        assert!(app.can_undo());
+        assert!(!app.can_redo());
+
+        run_shortcut(&mut app, egui::Key::Z, egui::Modifiers::COMMAND);
+        assert!(app.document.elements.is_empty());
+        assert!(!app.can_undo());
+        assert!(app.can_redo());
+
+        run_shortcut(&mut app, egui::Key::Z, redo_shortcut_modifiers());
+        assert_eq!(app.document.elements.len(), 1);
+
+        run_shortcut(&mut app, egui::Key::Z, egui::Modifiers::COMMAND);
+        assert!(app.document.elements.is_empty());
+        run_shortcut(&mut app, egui::Key::Y, egui::Modifiers::COMMAND);
+        assert_eq!(app.document.elements.len(), 1);
+    }
+
+    #[test]
+    fn every_drawing_tool_creation_is_undoable() {
+        for tool in [
+            Tool::Rectangle,
+            Tool::Ellipse,
+            Tool::Diamond,
+            Tool::Line,
+            Tool::Arrow,
+            Tool::Freehand,
+        ] {
+            let mut app = drag_shape_on_canvas(tool);
+            assert_eq!(
+                app.document.elements.len(),
+                1,
+                "{} should create one element",
+                tool.name()
+            );
+            assert!(
+                app.can_undo(),
+                "{} creation should be undoable",
+                tool.name()
+            );
+
+            run_shortcut(&mut app, egui::Key::Z, egui::Modifiers::COMMAND);
+            assert!(
+                app.document.elements.is_empty(),
+                "{} undo should remove the element",
+                tool.name()
+            );
+
+            run_shortcut(&mut app, egui::Key::Y, egui::Modifiers::COMMAND);
+            assert_eq!(
+                app.document.elements.len(),
+                1,
+                "{} redo should restore the element",
+                tool.name()
+            );
+        }
+    }
+
+    #[test]
+    fn text_creation_is_recorded_when_the_editor_commits() {
+        let mut app = EpsilonApp::default();
+        app.commit_shape(ElementKind::Text, Point::ZERO, Point::ZERO);
+        assert!(app.editing_text.is_some());
+        assert!(!app.can_undo(), "pending text must not be undoable");
+        assert!(!app.undo());
+
+        app.text_buffer = "Undoable text".to_owned();
+        let ctx = egui::Context::default();
+        let output = ctx.run_ui(Default::default(), |_ui| {});
+        output.drop_without_applying_deltas();
+        app.commit_text_edit(&ctx);
+
+        assert_eq!(app.document.elements.len(), 1);
+        assert!(app.can_undo());
+        run_shortcut(&mut app, egui::Key::Z, egui::Modifiers::COMMAND);
+        assert!(app.document.elements.is_empty());
+
+        run_shortcut(&mut app, egui::Key::Z, redo_shortcut_modifiers());
+        assert_eq!(app.document.elements.len(), 1);
+        assert_eq!(app.document.elements[0].text, "Undoable text");
+    }
+
+    #[test]
+    fn editing_existing_text_is_undoable() {
+        let ctx = egui::Context::default();
+        let output = ctx.run_ui(Default::default(), |_ui| {});
+        output.drop_without_applying_deltas();
+
+        let mut app = EpsilonApp::default();
+        app.commit_shape(ElementKind::Text, Point::ZERO, Point::ZERO);
+        app.text_buffer = "First".to_owned();
+        app.commit_text_edit(&ctx);
+        assert_eq!(app.document.elements[0].text, "First");
+
+        let id = app.document.elements[0].id;
+        app.editing_text = Some(id);
+        app.editing_text_is_new = false;
+        app.text_buffer = "Second".to_owned();
+        app.commit_text_edit(&ctx);
+
+        assert_eq!(app.document.elements[0].text, "Second");
+        assert_eq!(app.history.undo_len(), 2);
+
+        run_shortcut(&mut app, egui::Key::Z, egui::Modifiers::COMMAND);
+        assert_eq!(app.document.elements[0].text, "First");
+        run_shortcut(&mut app, egui::Key::Z, redo_shortcut_modifiers());
+        assert_eq!(app.document.elements[0].text, "Second");
+    }
+
+    #[test]
+    fn mixed_stage_three_edits_undo_and_redo_exactly() {
+        let mut app = EpsilonApp::default();
+        app.commit_shape(
+            ElementKind::Rectangle,
+            Point::new(0.0, 0.0),
+            Point::new(100.0, 80.0),
+        );
+        let id = app.document.elements[0].id;
+        app.selected.insert(id);
+
+        app.transform_original = app.selected_snapshots();
+        app.apply_move_delta(Point::new(20.0, 10.0));
+        app.finish_transform();
+
+        app.transform_original = app.selected_snapshots();
+        app.resize_start_bounds = app.selection_bounds().expect("selection bounds");
+        let resized = Rect::from_xywh(
+            app.resize_start_bounds.min.x,
+            app.resize_start_bounds.min.y,
+            200.0,
+            120.0,
+        );
+        app.apply_resize_to(resized);
+        app.finish_transform();
+
+        app.transform_original = app.selected_snapshots();
+        app.rotation_center = app.selection_bounds().expect("selection bounds").center();
+        app.apply_rotation(std::f64::consts::FRAC_PI_4);
+        app.finish_transform();
+
+        let before = app.selected_snapshots();
+        EpsilonApp::set_selection_x(&mut app.document, &app.selected, 55.0);
+        app.commit_property_edit(before);
+
+        let before = app.selected_snapshots();
+        let mut style = before[0].style;
+        style.stroke = DocumentColor::rgb(200, 30, 30);
+        EpsilonApp::apply_style_to_selection(&mut app.document, &app.selected, style);
+        app.commit_property_edit(before);
+
+        assert_eq!(app.history.undo_len(), 6);
+        let final_document = app.document.clone();
+
+        for step in 0..6 {
+            assert!(app.undo(), "undo step {step} should apply");
+        }
+        assert!(app.document.elements.is_empty());
+        assert!(!app.can_undo());
+
+        for step in 0..6 {
+            assert!(app.redo(), "redo step {step} should apply");
+        }
+        assert_eq!(app.document, final_document);
+        assert!(!app.can_redo());
+    }
+
+    #[test]
+    fn new_edit_after_undo_discards_the_redo_branch() {
+        let mut app = drag_shape_on_canvas(Tool::Rectangle);
+        run_shortcut(&mut app, egui::Key::Z, egui::Modifiers::COMMAND);
+        assert!(app.can_redo());
+
+        app.commit_shape(ElementKind::Ellipse, Point::ZERO, Point::new(20.0, 20.0));
+
+        assert!(!app.can_redo());
+        assert_eq!(app.document.elements.len(), 1);
+        assert_eq!(app.document.elements[0].kind, ElementKind::Ellipse);
     }
 
     #[test]

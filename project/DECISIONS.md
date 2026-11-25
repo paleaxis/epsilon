@@ -695,3 +695,33 @@ testable without serialization. The app must route every mutation through a
 transaction for it to be undoable; task 4.2 wires shape creation, transforms,
 style edits and text commits accordingly. Direct document mutation outside the
 history remains possible at the API level and is intentionally not tracked.
+
+---
+
+## D-038 — Undo wraps finished user actions; pending edits block history (2026-11-25)
+
+**Context.** Task 4.2 wires the core history into an editor where creation,
+continuous pointer drags and properties widgets mutate the document at different
+cadences.
+
+**Decision.** Shape, line, arrow and freehand creation commit one
+`Transaction::insert` through `insert_element`. Text creation stays out of
+history while the canvas editor is open and is recorded as one insert with the
+final content and measured height on commit; empty text leaves no entry. Move,
+resize and rotation record one `Replace` per drag from the drag-start snapshot
+when the pointer is released. Properties transform/style edits keep a pre-edit
+selection snapshot while any pointer button is down and commit one `Replace` on
+release; discrete changes such as typing a value or toggling a style commit
+immediately. `Action::Undo`/`Action::Redo` live in the central registry
+(Ctrl+Z, Ctrl+Shift+Z, Ctrl+Y) and drive the Edit menu, toolbar buttons and
+shortcuts; button enabled state reads `can_undo`/`can_redo`. History operations
+are ignored while the canvas text editor is open or a drag/properties edit is in
+flight. Undo/redo shortcuts are still dispatched when a non-canvas widget owns
+keyboard focus, so property fields do not swallow them, while the canvas text
+editor keeps its own TextEdit undo. The status bar shows undo/redo depths and any
+history error.
+
+**Consequences.** Every Stage 3 document edit becomes one undo step regardless
+of frame cadence, without full-document clones. Undo/redo cannot interleave with
+an unfinished edit and reapply stale snapshots on the next frame. History stays
+session-only; persistence belongs to Stage 5.

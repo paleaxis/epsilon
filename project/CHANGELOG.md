@@ -4,6 +4,14 @@ Notable changes, newest first. Version sections are added at release time.
 
 ## [Unreleased]
 
+### Added — 2026-11-25 (task 4.2)
+
+- Undo/redo wired into the editor: Ctrl+Z, Ctrl+Shift+Z, Ctrl+Y, Edit menu
+  items, history-aware toolbar buttons and status-bar depth/error feedback.
+- Every Stage 3 edit now records one history entry per finished action:
+  shape/freehand/text creation, move/resize/rotation drags, and properties or
+  style changes.
+
 ### Added — 2026-11-25 (task 4.1)
 
 - Core transaction-based undo/redo history with reversible insert, remove and

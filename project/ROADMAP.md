@@ -451,12 +451,23 @@ transaction grouping, branch discard, the memory bound, removal order,
 failed-commit atomicity and coalescing. The app does not consume the history
 yet.
 
-### [ ] 4.2 — Undo/redo integration
+### [x] 4.2 — Undo/redo integration
 
 Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y, history-aware toolbar buttons, status feedback.
 
 Acceptance: every Stage 3 edit is undoable; button enabled state matches history;
 manual check across mixed operations.
+
+Completed 2026-11-25: shape, line, arrow, freehand and committed text creation
+now insert through the core history; move/resize/rotation drags and
+properties/style edits record one transaction per finished interaction.
+Ctrl+Z/Ctrl+Shift+Z/Ctrl+Y, Edit → Undo/Redo and toolbar buttons are wired, with
+enabled state reading history depth. The status bar reports undo/redo depths and
+history errors. Tests cover shortcut dispatch, undo/redo for every drawing tool,
+text creation and existing-text edits, a mixed create/move/resize/rotate/
+property/style sequence with exact document equality, redo-branch discard, and
+history blocked during text editing. Live menu clicks and visual enabled states were not manually
+inspected; the headless shell renders them.
 
 ### [ ] 4.3 — Clipboard: copy, cut, paste
 

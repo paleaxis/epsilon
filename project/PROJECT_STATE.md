@@ -2,8 +2,8 @@
 
 Last updated: 2026-11-25
 Current stage: **Stage 4 — Editing experience**
-Last completed task: **4.1 — Command/history system (core)**
-Next task: **4.2 — Undo/redo integration**
+Last completed task: **4.2 — Undo/redo integration**
+Next task: **4.3 — Clipboard: copy, cut, paste**
 
 ## Status
 
@@ -12,9 +12,10 @@ theme toggle and About. Theme/tool settings and window/panel state persist from
 task 1.8 (completed early). The canvas pans, zooms, shows an adaptive grid, and
 the Rectangle, Ellipse, Diamond, Line, Arrow and Freehand tools create
 persistent in-memory shapes with live previews, and the Text tool places and
-edits multiline text in the canvas. Core now provides a bounded,
-transaction-based undo/redo history that stores reversible commands instead of
-document snapshots; the app does not use it yet (task 4.2).
+edits multiline text in the canvas. The app now routes shape, freehand and text
+creation, move/resize/rotation drags and properties/style edits through the
+core's bounded, transaction-based undo/redo history; Ctrl+Z, Ctrl+Shift+Z,
+Ctrl+Y, the Edit menu and toolbar buttons all drive it.
 
 Repository layout:
 
@@ -32,7 +33,7 @@ crates/epsilon-app/         eframe desktop shell
   src/layout.rs             shell size budgets + compile-time assertions
   src/theme.rs              semantic palettes, Visuals setup, serializable Theme
   src/tools.rs              Tool enum, shortcuts, painted icons, tool buttons
-  src/app.rs                EpsilonApp, menus, toolbar, tool state, settings
+  src/app.rs                EpsilonApp, menus, toolbar, tool state, history wiring, settings
 ```
 
 Working UI actions:
@@ -40,22 +41,27 @@ Working UI actions:
 | Where | Action |
 | --- | --- |
 | File menu | Quit (sends `ViewportCommand::Close`) |
+| Edit menu | Undo (Ctrl+Z) and Redo (Ctrl+Shift+Z / Ctrl+Y), enabled by history depth |
 | View menu | Dark mode, grid and clean-rendering toggles, applied immediately |
 | Help menu | About Epsilon (dialog) |
-| Top toolbar | Wordmark, document title, theme checkbox, About button, version |
+| Top toolbar | Wordmark, document title, undo/redo buttons, zoom buttons, theme checkbox, About button, version |
 | Canvas | Shape tools draw; Select picks/toggles/marquees, moves, resizes and rotates; text overlays edit in place; middle/space/hand drag pans; wheel zooms |
 | Properties | Live transform/style editor with mixed values; panel hide control |
+| Status bar | Tool, pointer, zoom, grid, undo/redo depths, history errors, version |
 
-Only working actions are listed; the Edit menu is intentionally absent until
-undo/clipboard stage 4 exists. Menus and toolbar share the same action helpers
-(`toggle_theme`, `open_about`, `request_quit`). Standard egui widgets provide
-mouse and keyboard focus/activation behavior.
+Only working actions are listed; Edit currently exposes undo and redo, and
+clipboard commands arrive in task 4.3. Menus and toolbar share the same action
+helpers (`toggle_theme`, `open_about`, `request_quit`, `undo`, `redo`). Standard
+egui widgets provide mouse and keyboard focus/activation behavior.
 
 Other shell behavior:
 
 - Tool palette: Select (V), Hand (H), Rectangle (R), Ellipse (O), Diamond (D),
   Line (L), Arrow (A), Freehand (P), Text (T), painted icons, tooltips,
   selected state; shortcuts defer to focused text input.
+- Undo/redo: Ctrl+Z, Ctrl+Shift+Z and Ctrl+Y; one history entry per finished
+  creation, drag or properties edit. Undo/redo stays available when a property
+  field has focus but is blocked while the canvas text editor is open.
 - Theme palette in `theme.rs`, default dark, explicit `ThemePreference`.
 - Six regions: menu bar, top toolbar, left rail, pannable/zoomable canvas, collapsible
   properties panel (200–400px, "No selection" empty state), status bar.
@@ -73,27 +79,29 @@ Other shell behavior:
   `Context::egui_wants_keyboard_input()`; `cc.storage` is a field.
 - Remote: `origin git@github.com/paleaxis/epsilon.git`, branch `main`.
 
-## Verified commands and results (task 4.1)
+## Verified commands and results (task 4.2)
 
 | Command | Result |
 | --- | --- |
 | `cargo fmt --all -- --check` | exit 0 |
 | `cargo clippy --workspace --all-targets -- -D warnings` | exit 0 |
-| `cargo test --workspace` | **123 passed, 0 failed** (56 app, 67 core) |
+| `cargo test --workspace` | **129 passed, 0 failed** (62 app, 67 core) |
 | `cargo build --workspace` | success, no warnings |
 | `timeout 8 ./target/debug/epsilon` | exit 124 (alive, no stderr) |
 
-Task 4.1 tests cover undo/redo ordering, exact document equality after full
-undo/redo cycles, transaction grouping as one undo step, redo-branch discard on
-a new edit, the history memory bound, multi-element removal/reinsertion order,
-failed-commit atomicity and drag coalescing. The suite also retains shell,
-persistence, viewport, grid, document, styling, rough rendering and earlier
-shape coverage.
+Task 4.2 tests cover Ctrl+Z/Ctrl+Shift+Z/Ctrl+Y dispatch, undo/redo of every
+drawing tool's creation, text creation recorded on editor commit, undo/redo of
+editing existing text, one-step undo/redo across a mixed sequence (create, move,
+resize, rotate, property position, style) with exact document equality,
+redo-branch discard after a new edit, and history blocked while the text editor
+is open. The suite also retains
+the core history tests and all earlier shell, persistence, viewport, grid,
+document, styling, rough rendering and shape coverage.
 
-Native launch was verified by process liveness; task 4.1 touched core only, so
-no new UI interaction was added. Menu clicks and keyboard navigation were not
-automated or visually reviewed; only the action functions behind them are
-tested.
+Native launch was verified by process liveness. The new Edit menu and toolbar
+buttons render in the headless shell tests, but interactive menu clicks,
+shortcut presses and visual enabled-state changes were not manually inspected
+in a live window.
 
 ## Features implemented
 
@@ -129,6 +137,8 @@ tested.
   values for multi-selection.
 - UI-independent command history with insert/remove/replace commands, grouped
   transactions, bounded undo stack, redo branching and drag coalescing.
+- Undo/redo wired through every Stage 3 edit, with shortcuts, Edit menu items,
+  history-aware toolbar buttons and status-bar depth/error feedback.
 - Persisted theme/tool; eframe-persisted window geometry and panel widths.
 - Tool palette with shortcuts, painted icons and accessible names.
 - Dark/light themes with central palette and contrast tests.
@@ -159,11 +169,13 @@ automation allowed). Items requiring a human reviewer:
 
 ## Known issues / limitations
 
-- Edit menu and formatting actions are not implemented (Stage 4); File has only
-  Quit until document I/O (Stage 5).
+- Edit currently contains only Undo/Redo; clipboard, delete, z-order and other
+  editing commands arrive in tasks 4.3–4.5. File has only Quit until document
+  I/O (Stage 5).
 - Shell polish and manual verification pass remains (1.9).
-- Core history exists, but the app does not feed edits into it and no
-  undo/redo shortcuts or buttons exist yet (task 4.2).
+- Undo history is session-only and is not saved with settings; document
+  persistence arrives in Stage 5. While the canvas text editor is open, its
+  own TextEdit undo applies instead of document history.
 - No CI; local verification only. No visual/screenshot review performed.
 - Window/panel restore relies on eframe/egui and was not re-measured under niri.
 - Project license: GPL-3.0 (`LICENSE`); manifests declare `GPL-3.0-only`.
@@ -172,7 +184,7 @@ automation allowed). Items requiring a human reviewer:
 
 1. Read `AGENTS.md`, `project/ROADMAP.md`, this file, `project/DECISIONS.md`.
 2. `git status` must be clean; run `cargo test --workspace` for the baseline.
-3. Start with the first incomplete task, 4.2 — Undo/redo integration.
+3. Start with the first incomplete task, 4.3 — Clipboard: copy, cut, paste.
 4. Verify format, clippy, tests, build, and `timeout 8 ./target/debug/epsilon`.
 5. Update this file, `ROADMAP.md`, `CHANGELOG.md`, then commit and push.
 
