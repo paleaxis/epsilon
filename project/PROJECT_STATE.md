@@ -2,8 +2,8 @@
 
 Last updated: 2026-11-26
 Current stage: **Stage 4 — Editing experience**
-Last completed task: **4.3 — Clipboard: copy, cut, paste**
-Next task: **4.4 — Delete, duplicate, select all, escape**
+Last completed task: **4.4 — Delete, duplicate, select all, escape**
+Next task: **4.5 — Z-order commands**
 
 ## Status
 
@@ -18,7 +18,9 @@ core's bounded, transaction-based undo/redo history; Ctrl+Z, Ctrl+Shift+Z,
 Ctrl+Y, the Edit menu and toolbar buttons all drive it. Cut, copy and paste are
 wired through a portable JSON payload: copies get fresh IDs and paint-order
 slots, repeated pastes cascade by 10 world units, and cut/copy/paste are
-available from Ctrl+X/C/V and the Edit menu.
+available from Ctrl+X/C/V and the Edit menu. Delete/Backspace remove the
+selection, Ctrl+D duplicates it one grid step away, Ctrl+A selects every
+element, and Esc clears the selection and returns to the Select tool.
 
 Repository layout:
 
@@ -45,7 +47,7 @@ Working UI actions:
 | Where | Action |
 | --- | --- |
 | File menu | Quit (sends `ViewportCommand::Close`) |
-| Edit menu | Undo/Redo (enabled by history depth) and Cut/Copy/Paste (enabled by selection/clipboard) |
+| Edit menu | Undo/Redo (history-aware), Cut/Copy/Paste, Select All, Duplicate and Delete (selection/clipboard-aware) |
 | View menu | Dark mode, grid and clean-rendering toggles, applied immediately |
 | Help menu | About Epsilon (dialog) |
 | Top toolbar | Wordmark, document title, undo/redo buttons, zoom buttons, theme checkbox, About button, version |
@@ -53,11 +55,12 @@ Working UI actions:
 | Properties | Live transform/style editor with mixed values; panel hide control |
 | Status bar | Tool, pointer, zoom, grid, undo/redo depths, history/clipboard feedback, version |
 
-Only working actions are listed; Edit exposes undo, redo, cut, copy and paste;
-delete, duplicate and z-order arrive in tasks 4.4–4.5. Menus and toolbar share
-the same action helpers (`toggle_theme`, `open_about`, `request_quit`, `undo`,
-`redo`, `cut_selection`, `copy_selection`, `paste_from_menu`). Standard egui
-widgets provide mouse and keyboard focus/activation behavior.
+Only working actions are listed; Edit exposes undo, redo, cut, copy, paste,
+select all, duplicate and delete; z-order arrives in task 4.5. Menus and toolbar
+share the same action helpers (`toggle_theme`, `open_about`, `request_quit`,
+`undo`, `redo`, `cut_selection`, `copy_selection`, `paste_from_menu`,
+`select_all`, `duplicate_selection`, `delete_selection`). Standard egui widgets
+provide mouse and keyboard focus/activation behavior.
 
 Other shell behavior:
 
@@ -67,6 +70,12 @@ Other shell behavior:
 - Undo/redo: Ctrl+Z, Ctrl+Shift+Z and Ctrl+Y; one history entry per finished
   creation, drag or properties edit. Undo/redo stays available when a property
   field has focus but is blocked while the canvas text editor is open.
+- Selection commands: Delete or Backspace remove the selection as one undoable
+  transaction; Ctrl+D duplicates it by one `DEFAULT_GRID_SIZE` (20 world units)
+  with fresh IDs and selects the copies; Ctrl+A selects every element; Esc
+  clears the selection and switches to the Select tool. Esc closes the help
+  overlay first, and all four are ignored while a drag, property edit or canvas
+  text editor is in progress.
 - Clipboard: Ctrl+C/Ctrl+X write a versioned `epsilon/clipboard` JSON payload to
   the system clipboard (eframe reports these as clipboard events, not key
   presses); Ctrl+V parses platform clipboard text and ignores non-Epsilon text.
@@ -93,26 +102,27 @@ Other shell behavior:
   `Context::egui_wants_keyboard_input()`; `cc.storage` is a field.
 - Remote: `origin git@github.com/paleaxis/epsilon.git`, branch `main`.
 
-## Verified commands and results (task 4.3)
+## Verified commands and results (task 4.4)
 
 | Command | Result |
 | --- | --- |
 | `cargo fmt --all -- --check` | exit 0 |
 | `cargo clippy --workspace --all-targets -- -D warnings` | exit 0 |
-| `cargo test --workspace` | **142 passed, 0 failed** (69 app, 73 core) |
+| `cargo test --workspace` | **150 passed, 0 failed** (77 app, 73 core) |
 | `cargo build --workspace` | success, no warnings |
 | `timeout 8 ./target/debug/epsilon` | exit 124 (alive, no stderr) |
 
-Task 4.3 tests cover JSON clipboard round-trip and rejecting unrelated text,
-paste ID regeneration without collisions, paint-order preservation, offset
-geometry for linear elements, unsupported formats/versions/empty payloads, and
-in the app: copy writing JSON to the platform output, exact cut/undo restore,
-paste selection plus fresh IDs plus offsets plus one undo entry, cascading
-repeated pastes, menu paste from the stored payload, ignoring unrelated
-clipboard text, suppressing clipboard events while canvas text is edited, and
-registered Ctrl+C/X/V bindings. The suite also retains the core history tests
-and all earlier shell, persistence, viewport, grid, document, styling, rough
-rendering and shape coverage.
+Task 4.4 adds tests for Delete and Backspace removal with cleared selection and
+undo restore, delete suppressed during canvas text editing, Ctrl+A selecting all
+(and doing nothing on an empty document), Ctrl+D offsetting by one grid step,
+regenerating IDs, selecting the copies, leaving the clipboard untouched and
+undoing as one entry, Esc clearing selection and switching to Select, Esc
+closing help before touching the selection, and registration of all five new
+bindings. The suite also retains the task 4.3 clipboard tests (JSON round-trip,
+ID regeneration, paint order, offsets, unsupported payloads, cut/undo, cascading
+pastes, menu paste, suppressed text-editor clipboard events), the core history
+tests and all earlier shell, persistence, viewport, grid, document, styling,
+rough rendering and shape coverage.
 
 Native launch was verified by process liveness. Clipboard shortcuts were driven
 in headless egui tests through `Event::Copy/Cut/Paste`, which is how eframe's
@@ -159,6 +169,8 @@ inspected in a live window.
 - Cut/copy/paste through a versioned clipboard JSON payload with fresh IDs,
   preserved paint order, cascading offsets, one-transaction paste/cut, system
   clipboard text interop and status-bar feedback.
+- Delete/Backspace, Ctrl+D duplicate with a grid-step offset, Ctrl+A select all,
+  and Esc clear-selection-return-to-Select, all exposed in the Edit menu.
 - Persisted theme/tool; eframe-persisted window geometry and panel widths.
 - Tool palette with shortcuts, painted icons and accessible names.
 - Dark/light themes with central palette and contrast tests.
@@ -189,9 +201,9 @@ automation allowed). Items requiring a human reviewer:
 
 ## Known issues / limitations
 
-- Edit contains Undo/Redo and Cut/Copy/Paste; delete, duplicate, select all and
-  z-order commands arrive in tasks 4.4–4.5. File has only Quit until document
-  I/O (Stage 5).
+- Edit contains Undo/Redo, Cut/Copy/Paste, Select All, Duplicate and Delete;
+  z-order commands arrive in task 4.5. File has only Quit until document I/O
+  (Stage 5).
 - Menu Paste uses the last in-app copy; Ctrl+V reads platform clipboard text.
   There is no synchronous clipboard read, so a payload copied by another Epsilon
   window cannot be pasted from the menu. Paste silently ignores non-Epsilon text
@@ -208,8 +220,7 @@ automation allowed). Items requiring a human reviewer:
 
 1. Read `AGENTS.md`, `project/ROADMAP.md`, this file, `project/DECISIONS.md`.
 2. `git status` must be clean; run `cargo test --workspace` for the baseline.
-3. Start with the first incomplete task, 4.4 — Delete, duplicate, select all,
-   escape.
+3. Start with the first incomplete task, 4.5 — Z-order commands.
 4. Verify format, clippy, tests, build, and `timeout 8 ./target/debug/epsilon`.
 5. Update this file, `ROADMAP.md`, `CHANGELOG.md`, then commit and push.
 

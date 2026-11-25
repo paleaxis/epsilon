@@ -641,6 +641,10 @@ enum Action {
     Cut,
     Copy,
     Paste,
+    Delete,
+    Duplicate,
+    SelectAll,
+    ClearSelection,
 }
 
 /// One entry in the central shortcut registry.
@@ -768,6 +772,41 @@ const KEYBINDINGS: &[KeyBinding] = &[
         modifiers: egui::Modifiers::COMMAND,
         action: Action::Paste,
         description: "Paste",
+    },
+    KeyBinding {
+        shortcut: "Delete",
+        key: egui::Key::Delete,
+        modifiers: egui::Modifiers::NONE,
+        action: Action::Delete,
+        description: "Delete selection",
+    },
+    KeyBinding {
+        shortcut: "Backspace",
+        key: egui::Key::Backspace,
+        modifiers: egui::Modifiers::NONE,
+        action: Action::Delete,
+        description: "Delete selection",
+    },
+    KeyBinding {
+        shortcut: "Ctrl+D",
+        key: egui::Key::D,
+        modifiers: egui::Modifiers::COMMAND,
+        action: Action::Duplicate,
+        description: "Duplicate selection",
+    },
+    KeyBinding {
+        shortcut: "Ctrl+A",
+        key: egui::Key::A,
+        modifiers: egui::Modifiers::COMMAND,
+        action: Action::SelectAll,
+        description: "Select all",
+    },
+    KeyBinding {
+        shortcut: "Esc",
+        key: egui::Key::Escape,
+        modifiers: egui::Modifiers::NONE,
+        action: Action::ClearSelection,
+        description: "Clear selection and return to Select",
     },
     KeyBinding {
         shortcut: "F1",
@@ -1015,6 +1054,54 @@ impl EpsilonApp {
         }
     }
 
+    fn can_select_all(&self) -> bool {
+        self.editing_text.is_none() && !self.document.elements.is_empty()
+    }
+
+    fn select_all(&mut self) {
+        if !self.can_select_all() || self.history_blocked() {
+            return;
+        }
+        self.selected = self
+            .document
+            .elements
+            .iter()
+            .map(|element| element.id)
+            .collect();
+    }
+
+    /// Copies the selection one grid step away and selects the copies. Reuses
+    /// the clipboard payload so duplicates get fresh IDs and new paint slots.
+    fn duplicate_selection(&mut self) -> bool {
+        if !self.can_copy() || self.history_blocked() {
+            return false;
+        }
+        let payload = ClipboardPayload::new(self.selection_elements());
+        let offset = Point::new(grid::DEFAULT_GRID_SIZE, grid::DEFAULT_GRID_SIZE);
+        let elements = payload.paste_elements(&self.document, offset);
+        if elements.is_empty() {
+            return false;
+        }
+        let ids: Vec<ElementId> = elements.iter().map(|element| element.id).collect();
+        let index = self.document.elements.len();
+        if !self.commit_transaction(Transaction::insert(index, elements)) {
+            return false;
+        }
+        self.selected = ids.into_iter().collect();
+        true
+    }
+
+    /// Escape drops the selection and returns to the Select tool. It is a no-op
+    /// while an edit is in flight so it cannot interrupt a drag or the text
+    /// editor (which handles Escape itself).
+    fn clear_selection(&mut self) {
+        if self.history_blocked() {
+            return;
+        }
+        self.selected.clear();
+        self.tool = Tool::Select;
+    }
+
     fn commit_transaction(&mut self, transaction: Transaction) -> bool {
         match self.history.commit(&mut self.document, transaction) {
             Ok(()) => {
@@ -1225,6 +1312,37 @@ impl EpsilonApp {
                             self.paste_from_menu();
                             ui.close();
                         }
+                        ui.separator();
+                        if ui
+                            .add_enabled(
+                                self.can_select_all(),
+                                egui::Button::new("Select All").shortcut_text("Ctrl+A"),
+                            )
+                            .clicked()
+                        {
+                            self.select_all();
+                            ui.close();
+                        }
+                        if ui
+                            .add_enabled(
+                                self.can_copy(),
+                                egui::Button::new("Duplicate").shortcut_text("Ctrl+D"),
+                            )
+                            .clicked()
+                        {
+                            self.duplicate_selection();
+                            ui.close();
+                        }
+                        if ui
+                            .add_enabled(
+                                self.can_copy(),
+                                egui::Button::new("Delete").shortcut_text("Del"),
+                            )
+                            .clicked()
+                        {
+                            self.delete_selection();
+                            ui.close();
+                        }
                     });
                     ui.menu_button("View", |ui| {
                         self.theme_toggle(ui);
@@ -1419,6 +1537,18 @@ impl EpsilonApp {
             }
             Action::Paste => {
                 self.paste_from_menu();
+            }
+            Action::Delete => {
+                self.delete_selection();
+            }
+            Action::Duplicate => {
+                self.duplicate_selection();
+            }
+            Action::SelectAll => {
+                self.select_all();
+            }
+            Action::ClearSelection => {
+                self.clear_selection();
             }
         }
     }
@@ -4500,6 +4630,128 @@ mod tests {
         run_clipboard_event(&mut app, egui::Event::Cut);
         assert_eq!(app.document, before);
         assert!(app.clipboard_feedback.is_none());
+    }
+
+    #[test]
+    fn delete_key_removes_the_selection_clears_it_and_is_undoable() {
+        let mut app = selection_app();
+        let original = app.document.clone();
+
+        run_shortcut(&mut app, egui::Key::Delete, egui::Modifiers::NONE);
+        assert!(app.document.elements.is_empty());
+        assert!(app.selected.is_empty(), "no stale selection after delete");
+
+        assert!(app.undo());
+        assert_eq!(app.document, original);
+    }
+
+    #[test]
+    fn backspace_deletes_the_selection_too() {
+        let mut app = selection_app();
+        run_shortcut(&mut app, egui::Key::Backspace, egui::Modifiers::NONE);
+        assert!(app.document.elements.is_empty());
+        assert!(app.selected.is_empty());
+    }
+
+    #[test]
+    fn delete_is_ignored_while_canvas_text_is_edited() {
+        let mut app = selection_app();
+        let id = app.document.elements[0].id;
+        app.editing_text = Some(id);
+        let before = app.document.clone();
+
+        run_shortcut(&mut app, egui::Key::Delete, egui::Modifiers::NONE);
+        run_shortcut(&mut app, egui::Key::Backspace, egui::Modifiers::NONE);
+        assert_eq!(app.document, before);
+    }
+
+    #[test]
+    fn select_all_selects_every_element() {
+        let mut app = selection_app();
+        app.selected.clear();
+
+        run_shortcut(&mut app, egui::Key::A, egui::Modifiers::COMMAND);
+        assert_eq!(app.selected.len(), 2);
+        for element in &app.document.elements {
+            assert!(app.selected.contains(&element.id));
+        }
+
+        let mut empty = EpsilonApp::default();
+        run_shortcut(&mut empty, egui::Key::A, egui::Modifiers::COMMAND);
+        assert!(empty.selected.is_empty());
+    }
+
+    #[test]
+    fn duplicate_offsets_by_one_grid_step_and_selects_the_copies() {
+        let mut app = selection_app();
+        app.selected = app.document.elements[..1].iter().map(|e| e.id).collect();
+        let original = app.document.clone();
+        let source = &app.document.elements[0];
+        let (source_x, source_y) = (source.x, source.y);
+
+        run_shortcut(&mut app, egui::Key::D, egui::Modifiers::COMMAND);
+
+        assert_eq!(app.document.elements.len(), 3);
+        assert_eq!(app.history.undo_len(), 3, "duplicate is one undo entry");
+        let copy = &app.document.elements[2];
+        assert_ne!(copy.id, app.document.elements[0].id);
+        assert_eq!(copy.x, source_x + grid::DEFAULT_GRID_SIZE);
+        assert_eq!(copy.y, source_y + grid::DEFAULT_GRID_SIZE);
+        assert_eq!(app.selected, HashSet::from([copy.id]));
+        assert!(
+            app.clipboard.is_none(),
+            "duplicate must not touch the clipboard"
+        );
+        assert_eq!(app.paste_count, 0);
+
+        assert!(app.undo());
+        assert_eq!(app.document, original);
+    }
+
+    #[test]
+    fn escape_clears_the_selection_and_returns_to_the_select_tool() {
+        let mut app = selection_app();
+        app.tool = Tool::Rectangle;
+        let before = app.document.clone();
+
+        run_shortcut(&mut app, egui::Key::Escape, egui::Modifiers::NONE);
+        assert!(app.selected.is_empty());
+        assert_eq!(app.tool, Tool::Select);
+        assert_eq!(app.document, before);
+    }
+
+    #[test]
+    fn escape_closes_help_before_clearing_the_selection() {
+        let mut app = selection_app();
+        app.help_open = true;
+        app.tool = Tool::Hand;
+
+        run_shortcut(&mut app, egui::Key::Escape, egui::Modifiers::NONE);
+        assert!(!app.help_open);
+        assert_eq!(app.selected.len(), 2);
+        assert_eq!(app.tool, Tool::Hand);
+    }
+
+    #[test]
+    fn edit_shortcuts_are_registered() {
+        for (key, modifiers, action) in [
+            (egui::Key::Delete, egui::Modifiers::NONE, Action::Delete),
+            (egui::Key::Backspace, egui::Modifiers::NONE, Action::Delete),
+            (egui::Key::D, egui::Modifiers::COMMAND, Action::Duplicate),
+            (egui::Key::A, egui::Modifiers::COMMAND, Action::SelectAll),
+            (
+                egui::Key::Escape,
+                egui::Modifiers::NONE,
+                Action::ClearSelection,
+            ),
+        ] {
+            assert!(
+                KEYBINDINGS.iter().any(|binding| binding.key == key
+                    && binding.modifiers == modifiers
+                    && binding.action == action),
+                "{action:?} has no shortcut"
+            );
+        }
     }
 
     #[test]

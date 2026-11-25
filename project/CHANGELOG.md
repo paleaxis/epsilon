@@ -4,6 +4,15 @@ Notable changes, newest first. Version sections are added at release time.
 
 ## [Unreleased]
 
+### Added — 2026-11-26 (task 4.4)
+
+- Delete/Backspace remove the selection as one undoable transaction, with the
+  selection cleared afterwards.
+- Ctrl+D duplicates the selection one grid step away with fresh IDs and selects
+  the copies; Ctrl+A selects all elements.
+- Esc clears the selection and returns to the Select tool (after closing help).
+- Edit menu entries for Select All, Duplicate and Delete.
+
 ### Added — 2026-11-26 (task 4.3)
 
 - Cut, copy and paste via Ctrl+X/C/V and the Edit menu, backed by a versioned

@@ -758,3 +758,32 @@ rather than corrupted. Only currently supported payload versions paste; menu
 and cross-window paste differ because there is no clipboard read API. Clipboard
 handling is skipped whenever a text widget owns the keyboard, keeping TextEdit
 clipboard behavior intact.
+
+---
+
+## D-040 — Selection commands share one gated action path; duplicate reuses paste (2026-11-26)
+
+**Context.** Task 4.4 adds Delete/Backspace, Ctrl+D duplicate, Ctrl+A select all
+and Esc. These must not fire while the canvas text editor owns the keyboard, an
+ongoing drag/properties edit holds history snapshots, or the help overlay is
+open. Duplicate also needs the same fresh-ID and paint-order guarantees as
+paste, and Esc already closes both the help overlay and the text editor.
+
+**Decision.** Delete and Backspace map to one `Action::Delete` that calls the
+same history-removing `delete_selection` used by cut; Esc maps to
+`Action::ClearSelection`, dispatched only after the help overlay's own Escape
+handling and suppressed while any widget owns keyboard focus. Duplicate builds
+an in-memory `ClipboardPayload` from the selection and calls its
+`paste_elements` with a fixed `DEFAULT_GRID_SIZE` offset (20 world units,
+whether or not the grid is visible), then inserts the copies in one history
+transaction and selects them. Duplicate deliberately leaves `clipboard` and
+`paste_count` untouched. Select all replaces the selection set with every
+document element. All four no-op when `history_blocked()` is true, which covers
+the text editor, active drags and properties edits. The Edit menu exposes the
+three non-Escape commands with the same enabled predicates.
+
+**Consequences.** The shortcuts, menu and future context-menu entries share one
+behavior, and selection commands cannot corrupt an in-flight edit. Duplicate
+offset is deterministic and independent of grid visibility. Esc precedence is
+help, then text editor (which commits), then clear selection and return to
+Select; no command silently mutates the selection while a drag is unfinished.

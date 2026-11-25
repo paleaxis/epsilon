@@ -490,12 +490,23 @@ Core and app tests cover IDs, order, offsets, unsupported payloads, undo/redo
 and event dispatch. Live cross-application clipboard and menu clicks were not
 manually inspected.
 
-### [ ] 4.4 — Delete, duplicate, select all, escape
+### [x] 4.4 — Delete, duplicate, select all, escape
 
 Delete/Backspace, Ctrl+D duplicate, Ctrl+A select all, Esc clears selection and
 returns to select tool.
 
 Acceptance: shortcuts tested; duplicate offsets by grid step; no stale selection.
+
+Completed 2026-11-26: Delete and Backspace remove the selection through one
+undoable history transaction and clear the selection; duplication reuses the
+clipboard payload path to copy the selection one `DEFAULT_GRID_SIZE` away with
+fresh IDs, new paint slots and the copies selected, without touching the
+clipboard state; Ctrl+A selects every element; Esc clears the selection and
+returns to the Select tool while closing the help overlay first. All commands
+are ignored during drags, property edits and canvas text editing. The Edit menu
+exposes Select All, Duplicate and Delete with enabled states. Tests cover each
+shortcut, undo restore, grid-step offset, fresh IDs, empty documents, no stale
+selection and Escape precedence.
 
 ### [ ] 4.5 — Z-order commands
 
