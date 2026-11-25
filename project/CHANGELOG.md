@@ -4,6 +4,15 @@ Notable changes, newest first. Version sections are added at release time.
 
 ## [Unreleased]
 
+### Added — 2026-11-26 (task 4.3)
+
+- Cut, copy and paste via Ctrl+X/C/V and the Edit menu, backed by a versioned
+  `epsilon/clipboard` JSON payload written to the system clipboard.
+- Paste regenerates element IDs, preserves relative paint order above existing
+  elements, cascades 10-unit offsets, selects the new copies and records one
+  undoable transaction; cut is copy plus one undoable removal.
+- Status-bar Copied/Cut/Pasted and unsupported-payload feedback.
+
 ### Added — 2026-11-25 (task 4.2)
 
 - Undo/redo wired into the editor: Ctrl+Z, Ctrl+Shift+Z, Ctrl+Y, Edit menu

@@ -725,3 +725,36 @@ history error.
 of frame cadence, without full-document clones. Undo/redo cannot interleave with
 an unfinished edit and reapply stale snapshots on the next frame. History stays
 session-only; persistence belongs to Stage 5.
+
+---
+
+## D-039 — Clipboard payloads are versioned JSON; shortcuts use egui clipboard events (2026-11-26)
+
+**Context.** Task 4.3 needs copy/cut/paste that survives across paste cycles and
+can interoperate with the system clipboard. Elements already serialize as JSON,
+but raw element vectors have no type marker, so unrelated clipboard text could
+be mistaken for a selection. eframe's winit integration also translates
+Ctrl+C/X/V into `Event::Copy`, `Event::Cut` and `Event::Paste(text)` before any
+key press reaches egui, and egui offers no synchronous clipboard read.
+
+**Decision.** `epsilon-core::clipboard` owns a `ClipboardPayload` with an
+`epsilon/clipboard` format marker, a payload version and the copied elements.
+Copy/cut serialize it to system clipboard text via `Context::copy_text`; Ctrl+V
+parses `Event::Paste` text and rejects anything unsupported. Menu Paste uses the
+last in-app payload because the platform clipboard cannot be read on demand.
+Pasting goes through core's `paste_elements`, which sorts by paint order,
+reserves document and payload IDs before generating fresh ones, assigns new
+z-order slots and applies a cascading 10-unit world offset. Paste inserts in one
+history transaction and selects the copies; cut also removes in one transaction.
+`serde_json` moves from a core dev-dependency to a runtime dependency. The
+Ctrl+C/X/V entries stay in the central shortcut registry for the help overlay
+and duplicate checks, and serve as a key-event fallback, while the native path
+is the clipboard events.
+
+**Consequences.** Copies never collide with live IDs or reuse the copied ID,
+relative order survives, repeated pastes stay visible, and both paste and cut
+are undoable. The format is self-describing, so future versions can be rejected
+rather than corrupted. Only currently supported payload versions paste; menu
+and cross-window paste differ because there is no clipboard read API. Clipboard
+handling is skipped whenever a text widget owns the keyboard, keeping TextEdit
+clipboard behavior intact.

@@ -10,8 +10,7 @@ repository.workspace = true
 # The engine is UI-agnostic by design: no egui/eframe dependency.
 [dependencies]
 serde.workspace = true
-
-[dev-dependencies]
+# Clipboard payloads and the Stage 5 document format are JSON text.
 serde_json.workspace = true
 
 [lints.rust]

@@ -469,13 +469,26 @@ property/style sequence with exact document equality, redo-branch discard, and
 history blocked during text editing. Live menu clicks and visual enabled states were not manually
 inspected; the headless shell renders them.
 
-### [ ] 4.3 — Clipboard: copy, cut, paste
+### [x] 4.3 — Clipboard: copy, cut, paste
 
 Copy selection to internal clipboard JSON, paste with offset and fresh IDs,
 system clipboard text interop where safe.
 
 Acceptance: IDs regenerated (no collisions), z-order preserved, paste offset
 tested; cut/copy/paste via shortcuts and menu.
+
+Completed 2026-11-26: `epsilon-core::clipboard` defines a versioned
+`epsilon/clipboard` JSON payload. Pasting sorts by paint order, regenerates IDs
+that collide with neither the document nor the payload, assigns new z-order
+slots above every element and offsets geometry (including linear world points)
+by a cascading 10-unit step. The app writes copy/cut JSON to the system
+clipboard through egui clipboard events (Ctrl+C/X/V), parses Ctrl+V payloads,
+ignores unrelated text with status feedback, selects pasted copies and records
+paste/cut as single undo transactions. The Edit menu exposes Cut/Copy/Paste with
+enabled states; clipboard commands are blocked while canvas text is edited.
+Core and app tests cover IDs, order, offsets, unsupported payloads, undo/redo
+and event dispatch. Live cross-application clipboard and menu clicks were not
+manually inspected.
 
 ### [ ] 4.4 — Delete, duplicate, select all, escape
 

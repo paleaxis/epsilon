@@ -2,6 +2,7 @@ use std::collections::HashSet;
 
 use eframe::egui::{self, Align, Layout, RichText};
 
+use epsilon_core::clipboard::{ClipboardPayload, PASTE_OFFSET};
 use epsilon_core::document::{
     Color as DocumentColor, Document, Element, ElementId, ElementKind, FillStyle, StrokeStyle,
     TextAlign,
@@ -496,6 +497,36 @@ fn measured_text_height(
     ((galley.size().y / zoom as f32) as f64).max(font_size * 1.25)
 }
 
+/// Result of the last clipboard command, reported in the status bar.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ClipboardFeedback {
+    Copied(usize),
+    Cut(usize),
+    Pasted(usize),
+    Unsupported,
+    Error(String),
+}
+
+impl ClipboardFeedback {
+    fn is_error(&self) -> bool {
+        matches!(self, Self::Unsupported | Self::Error(_))
+    }
+
+    fn message(&self) -> String {
+        fn elements(count: usize) -> String {
+            format!("{count} element{}", if count == 1 { "" } else { "s" })
+        }
+
+        match self {
+            Self::Copied(count) => format!("Copied {}", elements(*count)),
+            Self::Cut(count) => format!("Cut {}", elements(*count)),
+            Self::Pasted(count) => format!("Pasted {}", elements(*count)),
+            Self::Unsupported => "Clipboard has no Epsilon elements".to_owned(),
+            Self::Error(message) => message.clone(),
+        }
+    }
+}
+
 /// Root application object and native shell.
 ///
 /// This is the Stage 1 shell: regions are laid out and themed, with the tool
@@ -519,6 +550,14 @@ pub struct EpsilonApp {
     history: History,
     /// Last failed history operation, shown in the status bar.
     history_error: Option<String>,
+    /// Last copied or cut selection. Menu paste uses this in-app payload;
+    /// Ctrl+V reads the platform clipboard text instead.
+    clipboard: Option<ClipboardPayload>,
+    /// Number of times the current clipboard payload has been pasted, used to
+    /// cascade repeated pastes instead of stacking copies exactly.
+    paste_count: u32,
+    /// Last clipboard command result, shown in the status bar.
+    clipboard_feedback: Option<ClipboardFeedback>,
     /// Selection snapshot captured before a continuous properties edit.
     property_edit_before: Option<Vec<Element>>,
     /// Last pointer position in world coordinates, if the pointer is over the
@@ -564,6 +603,9 @@ impl Default for EpsilonApp {
             document: Document::default(),
             history: History::default(),
             history_error: None,
+            clipboard: None,
+            paste_count: 0,
+            clipboard_feedback: None,
             property_edit_before: None,
             pointer_world: None,
             canvas_rect: egui::Rect::NOTHING,
@@ -596,6 +638,9 @@ enum Action {
     ZoomFit,
     Undo,
     Redo,
+    Cut,
+    Copy,
+    Paste,
 }
 
 /// One entry in the central shortcut registry.
@@ -699,6 +744,30 @@ const KEYBINDINGS: &[KeyBinding] = &[
         modifiers: egui::Modifiers::COMMAND,
         action: Action::Redo,
         description: "Redo",
+    },
+    // eframe's winit integration turns Ctrl+C/X/V into clipboard events before
+    // egui sees a key press. These entries document the shortcuts (the help
+    // overlay is generated from this table) and act as a key-event fallback.
+    KeyBinding {
+        shortcut: "Ctrl+C",
+        key: egui::Key::C,
+        modifiers: egui::Modifiers::COMMAND,
+        action: Action::Copy,
+        description: "Copy selection",
+    },
+    KeyBinding {
+        shortcut: "Ctrl+X",
+        key: egui::Key::X,
+        modifiers: egui::Modifiers::COMMAND,
+        action: Action::Cut,
+        description: "Cut selection",
+    },
+    KeyBinding {
+        shortcut: "Ctrl+V",
+        key: egui::Key::V,
+        modifiers: egui::Modifiers::COMMAND,
+        action: Action::Paste,
+        description: "Paste",
     },
     KeyBinding {
         shortcut: "F1",
@@ -806,6 +875,144 @@ impl EpsilonApp {
 
     fn can_redo(&self) -> bool {
         self.editing_text.is_none() && self.history.can_redo()
+    }
+
+    /// Clipboard commands are unavailable while an in-place text editor owns
+    /// the selection, mirroring undo/redo.
+    fn can_copy(&self) -> bool {
+        self.editing_text.is_none() && !self.selected.is_empty()
+    }
+
+    fn can_paste(&self) -> bool {
+        self.editing_text.is_none()
+            && self
+                .clipboard
+                .as_ref()
+                .is_some_and(ClipboardPayload::is_supported)
+    }
+
+    /// Selected elements in document (insertion) order, as stored on the
+    /// clipboard. Paste re-sorts them by paint order.
+    fn selection_elements(&self) -> Vec<Element> {
+        self.document
+            .elements
+            .iter()
+            .filter(|element| self.selected.contains(&element.id))
+            .cloned()
+            .collect()
+    }
+
+    /// Copies the selection as JSON to the system clipboard and remembers the
+    /// payload for the Edit menu, which cannot read the platform clipboard.
+    fn copy_selection(&mut self, ctx: &egui::Context) -> bool {
+        if !self.can_copy() {
+            return false;
+        }
+        let payload = ClipboardPayload::new(self.selection_elements());
+        let json = match payload.to_json() {
+            Ok(json) => json,
+            Err(error) => {
+                self.clipboard_feedback =
+                    Some(ClipboardFeedback::Error(format!("Copy failed: {error}")));
+                return false;
+            }
+        };
+        let count = payload.elements.len();
+        ctx.copy_text(json);
+        self.clipboard = Some(payload);
+        self.paste_count = 0;
+        self.clipboard_feedback = Some(ClipboardFeedback::Copied(count));
+        true
+    }
+
+    /// Removes the selection through history. Shared by Cut and later delete
+    /// commands so both produce one undoable transaction.
+    fn delete_selection(&mut self) -> bool {
+        if !self.can_copy() || self.history_blocked() {
+            return false;
+        }
+        let ids: Vec<ElementId> = self
+            .selection_elements()
+            .iter()
+            .map(|element| element.id)
+            .collect();
+        match Transaction::remove(&self.document, &ids) {
+            Ok(transaction) => {
+                if self.commit_transaction(transaction) {
+                    self.selected.clear();
+                    true
+                } else {
+                    false
+                }
+            }
+            Err(error) => {
+                self.history_error = Some(format!("Edit failed: {error}"));
+                false
+            }
+        }
+    }
+
+    fn cut_selection(&mut self, ctx: &egui::Context) -> bool {
+        if !self.can_copy() {
+            return false;
+        }
+        let count = self.selection_elements().len();
+        // Copy before deleting so the clipboard survives a failed removal.
+        if !self.copy_selection(ctx) {
+            return false;
+        }
+        if !self.delete_selection() {
+            return false;
+        }
+        self.clipboard_feedback = Some(ClipboardFeedback::Cut(count));
+        true
+    }
+
+    /// Inserts paste-ready copies through one history transaction, selects
+    /// them, and makes the payload the one the Edit menu pastes next.
+    fn paste_payload(&mut self, payload: ClipboardPayload) -> bool {
+        if self.history_blocked() || !payload.is_supported() {
+            self.clipboard_feedback = Some(ClipboardFeedback::Unsupported);
+            return false;
+        }
+        // Every paste is offset so it never hides exactly under the source;
+        // repeated pastes cascade instead of stacking.
+        let step = PASTE_OFFSET * f64::from(self.paste_count + 1);
+        let elements = payload.paste_elements(&self.document, Point::new(step, step));
+        if elements.is_empty() {
+            self.clipboard_feedback = Some(ClipboardFeedback::Unsupported);
+            return false;
+        }
+        let count = elements.len();
+        let ids: Vec<ElementId> = elements.iter().map(|element| element.id).collect();
+        let index = self.document.elements.len();
+        if !self.commit_transaction(Transaction::insert(index, elements)) {
+            return false;
+        }
+        self.selected = ids.into_iter().collect();
+        self.clipboard = Some(payload);
+        self.paste_count = self.paste_count.saturating_add(1);
+        self.clipboard_feedback = Some(ClipboardFeedback::Pasted(count));
+        true
+    }
+
+    /// Pastes a system clipboard payload supplied by egui. Arbitrary text is
+    /// ignored rather than inserted as an element.
+    fn paste_text(&mut self, text: &str) -> bool {
+        match ClipboardPayload::from_json(text) {
+            Ok(payload) if payload.is_supported() => self.paste_payload(payload),
+            Ok(_) | Err(_) => {
+                self.clipboard_feedback = Some(ClipboardFeedback::Unsupported);
+                false
+            }
+        }
+    }
+
+    fn paste_from_menu(&mut self) -> bool {
+        match self.clipboard.clone() {
+            Some(payload) => self.paste_payload(payload),
+            None => false,
+        }
     }
 
     fn commit_transaction(&mut self, transaction: Transaction) -> bool {
@@ -987,6 +1194,37 @@ impl EpsilonApp {
                             self.redo();
                             ui.close();
                         }
+                        ui.separator();
+                        if ui
+                            .add_enabled(
+                                self.can_copy(),
+                                egui::Button::new("Cut").shortcut_text("Ctrl+X"),
+                            )
+                            .clicked()
+                        {
+                            self.cut_selection(ui.ctx());
+                            ui.close();
+                        }
+                        if ui
+                            .add_enabled(
+                                self.can_copy(),
+                                egui::Button::new("Copy").shortcut_text("Ctrl+C"),
+                            )
+                            .clicked()
+                        {
+                            self.copy_selection(ui.ctx());
+                            ui.close();
+                        }
+                        if ui
+                            .add_enabled(
+                                self.can_paste(),
+                                egui::Button::new("Paste").shortcut_text("Ctrl+V"),
+                            )
+                            .clicked()
+                        {
+                            self.paste_from_menu();
+                            ui.close();
+                        }
                     });
                     ui.menu_button("View", |ui| {
                         self.theme_toggle(ui);
@@ -1088,6 +1326,26 @@ impl EpsilonApp {
         let wants_keyboard = ctx.egui_wants_keyboard_input();
         let events: Vec<egui::Event> = ctx.input(|input| input.events.clone());
         for event in events {
+            // winit translates Ctrl+C/X/V into clipboard events instead of key
+            // presses, so these are the real native shortcut path. A focused
+            // text widget keeps its own clipboard handling.
+            match event {
+                egui::Event::Copy if !wants_keyboard && !self.help_open => {
+                    self.copy_selection(ctx);
+                    continue;
+                }
+                egui::Event::Cut if !wants_keyboard && !self.help_open => {
+                    self.cut_selection(ctx);
+                    continue;
+                }
+                egui::Event::Paste(text) if !wants_keyboard && !self.help_open => {
+                    self.paste_text(&text);
+                    continue;
+                }
+                egui::Event::Copy | egui::Event::Cut | egui::Event::Paste(_) => continue,
+                _ => {}
+            }
+
             let egui::Event::Key {
                 key,
                 pressed: true,
@@ -1111,7 +1369,7 @@ impl EpsilonApp {
                     && let Some(binding) = binding
                     && matches!(binding.action, Action::Undo | Action::Redo)
                 {
-                    self.perform_action(binding.action, pointer_anchor(ctx, canvas_rect));
+                    self.perform_action(ctx, binding.action, pointer_anchor(ctx, canvas_rect));
                 }
                 continue;
             }
@@ -1134,12 +1392,12 @@ impl EpsilonApp {
             }
 
             if let Some(binding) = binding {
-                self.perform_action(binding.action, pointer_anchor(ctx, canvas_rect));
+                self.perform_action(ctx, binding.action, pointer_anchor(ctx, canvas_rect));
             }
         }
     }
 
-    fn perform_action(&mut self, action: Action, anchor: Point) {
+    fn perform_action(&mut self, ctx: &egui::Context, action: Action, anchor: Point) {
         match action {
             Action::SelectTool(tool) => self.tool = tool,
             Action::ToggleHelp => self.help_open = !self.help_open,
@@ -1152,6 +1410,15 @@ impl EpsilonApp {
             }
             Action::Redo => {
                 self.redo();
+            }
+            Action::Cut => {
+                self.cut_selection(ctx);
+            }
+            Action::Copy => {
+                self.copy_selection(ctx);
+            }
+            Action::Paste => {
+                self.paste_from_menu();
             }
         }
     }
@@ -2631,6 +2898,15 @@ impl EpsilonApp {
                                 .color(ui.visuals().error_fg_color),
                         );
                     }
+                    if let Some(feedback) = &self.clipboard_feedback {
+                        ui.add_space(12.0);
+                        let text = RichText::new(feedback.message()).small();
+                        ui.label(if feedback.is_error() {
+                            text.color(ui.visuals().error_fg_color)
+                        } else {
+                            text.weak()
+                        });
+                    }
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         ui.label(
                             RichText::new(concat!("Epsilon ", env!("CARGO_PKG_VERSION"))).weak(),
@@ -4079,6 +4355,167 @@ mod tests {
         assert!(!app.can_redo());
         assert_eq!(app.document.elements.len(), 1);
         assert_eq!(app.document.elements[0].kind, ElementKind::Ellipse);
+    }
+
+    fn run_clipboard_event(app: &mut EpsilonApp, event: egui::Event) -> Vec<egui::OutputCommand> {
+        let ctx = egui::Context::default();
+        let input = egui::RawInput {
+            events: vec![event],
+            ..Default::default()
+        };
+        let canvas_rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(720.0, 480.0));
+        let output = ctx.run_ui(input, |ui| app.handle_shortcuts(ui.ctx(), canvas_rect));
+        let commands = output.platform_output.commands.clone();
+        output.drop_without_applying_deltas();
+        commands
+    }
+
+    fn copied_text(commands: &[egui::OutputCommand]) -> Option<String> {
+        commands.iter().find_map(|command| match command {
+            egui::OutputCommand::CopyText(text) => Some(text.clone()),
+            _ => None,
+        })
+    }
+
+    fn selection_app() -> EpsilonApp {
+        let mut app = EpsilonApp::default();
+        app.commit_shape(
+            ElementKind::Rectangle,
+            Point::new(10.0, 20.0),
+            Point::new(60.0, 80.0),
+        );
+        app.commit_shape(
+            ElementKind::Ellipse,
+            Point::new(100.0, 20.0),
+            Point::new(150.0, 80.0),
+        );
+        app.selected = app.document.elements.iter().map(|e| e.id).collect();
+        app
+    }
+
+    #[test]
+    fn copy_writes_selection_json_to_the_system_clipboard() {
+        let mut app = selection_app();
+        let commands = run_clipboard_event(&mut app, egui::Event::Copy);
+        let json = copied_text(&commands).expect("copy must write clipboard text");
+        let payload = ClipboardPayload::from_json(&json).expect("clipboard JSON parses");
+
+        assert!(payload.is_supported());
+        assert_eq!(payload.elements.len(), 2);
+        assert_eq!(app.clipboard_feedback, Some(ClipboardFeedback::Copied(2)));
+        assert_eq!(app.clipboard.as_ref().map(|p| p.elements.len()), Some(2));
+    }
+
+    #[test]
+    fn cut_removes_the_selection_and_undo_restores_it_exactly() {
+        let mut app = selection_app();
+        let original = app.document.clone();
+
+        let commands = run_clipboard_event(&mut app, egui::Event::Cut);
+        let json = copied_text(&commands).expect("cut must also copy");
+        assert!(ClipboardPayload::from_json(&json).is_ok());
+        assert!(app.document.elements.is_empty());
+        assert!(app.selected.is_empty());
+
+        assert_eq!(app.history.undo_len(), 3, "cut adds one history entry");
+        assert!(app.undo());
+        assert_eq!(app.document, original);
+        assert_eq!(app.history.undo_len(), 2);
+    }
+
+    #[test]
+    fn paste_regenerates_ids_offsets_geometry_and_selects_the_copies() {
+        let mut app = selection_app();
+        let original_ids: HashSet<ElementId> = app
+            .document
+            .elements
+            .iter()
+            .map(|element| element.id)
+            .collect();
+        let original_positions: Vec<(f64, f64)> = app
+            .document
+            .elements
+            .iter()
+            .map(|element| (element.x, element.y))
+            .collect();
+
+        let commands = run_clipboard_event(&mut app, egui::Event::Copy);
+        let json = copied_text(&commands).expect("copy must write clipboard text");
+        run_clipboard_event(&mut app, egui::Event::Paste(json));
+
+        assert_eq!(app.document.elements.len(), 4);
+        let pasted = &app.document.elements[2..];
+        let pasted_ids: HashSet<ElementId> = pasted.iter().map(|element| element.id).collect();
+        assert_eq!(pasted_ids.len(), 2);
+        assert!(pasted_ids.is_disjoint(&original_ids));
+        assert_eq!(app.selected, pasted_ids);
+        for (pasted, (x, y)) in pasted.iter().zip(&original_positions) {
+            assert_eq!(pasted.x, x + PASTE_OFFSET);
+            assert_eq!(pasted.y, y + PASTE_OFFSET);
+        }
+        assert_eq!(app.clipboard_feedback, Some(ClipboardFeedback::Pasted(2)));
+
+        // The paste is a single undoable transaction.
+        assert_eq!(app.history.undo_len(), 3);
+        assert!(app.undo());
+        assert_eq!(app.document.elements.len(), 2);
+    }
+
+    #[test]
+    fn repeated_pastes_cascade_and_menu_paste_uses_the_stored_payload() {
+        let mut app = selection_app();
+        app.selected = app.document.elements[..1].iter().map(|e| e.id).collect();
+        let commands = run_clipboard_event(&mut app, egui::Event::Copy);
+        let json = copied_text(&commands).expect("copy must write clipboard text");
+        let source_x = app.document.elements[0].x;
+
+        run_clipboard_event(&mut app, egui::Event::Paste(json.clone()));
+        assert_eq!(app.document.elements[2].x, source_x + PASTE_OFFSET);
+
+        app.selected.clear();
+        assert!(app.paste_from_menu());
+        assert_eq!(app.document.elements[3].x, source_x + PASTE_OFFSET * 2.0);
+    }
+
+    #[test]
+    fn unrelated_clipboard_text_is_ignored() {
+        let mut app = selection_app();
+        let before = app.document.clone();
+
+        run_clipboard_event(&mut app, egui::Event::Paste("plain text".to_owned()));
+        assert_eq!(app.document, before);
+        assert_eq!(app.clipboard_feedback, Some(ClipboardFeedback::Unsupported));
+        assert!(!app.can_paste());
+    }
+
+    #[test]
+    fn clipboard_events_are_ignored_while_canvas_text_is_edited() {
+        let mut app = selection_app();
+        let id = app.document.elements[0].id;
+        app.editing_text = Some(id);
+        let before = app.document.clone();
+
+        let commands = run_clipboard_event(&mut app, egui::Event::Copy);
+        assert!(copied_text(&commands).is_none());
+        run_clipboard_event(&mut app, egui::Event::Cut);
+        assert_eq!(app.document, before);
+        assert!(app.clipboard_feedback.is_none());
+    }
+
+    #[test]
+    fn clipboard_shortcuts_are_registered() {
+        for (key, action) in [
+            (egui::Key::C, Action::Copy),
+            (egui::Key::X, Action::Cut),
+            (egui::Key::V, Action::Paste),
+        ] {
+            assert!(
+                KEYBINDINGS.iter().any(|binding| binding.key == key
+                    && binding.modifiers == egui::Modifiers::COMMAND
+                    && binding.action == action),
+                "{action:?} has no Ctrl shortcut"
+            );
+        }
     }
 
     #[test]
