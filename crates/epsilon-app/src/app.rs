@@ -5,7 +5,7 @@ use eframe::egui::{self, Align, Layout, RichText};
 use epsilon_core::clipboard::{ClipboardPayload, PASTE_OFFSET};
 use epsilon_core::document::{
     Color as DocumentColor, Document, Element, ElementId, ElementKind, FillStyle, StrokeStyle,
-    TextAlign,
+    TextAlign, ZOrderMove,
 };
 use epsilon_core::geometry::{
     Point, Rect, ResizeHandle, arrowhead_points, constrain_angle, resize_rect, rotate_point,
@@ -645,6 +645,7 @@ enum Action {
     Duplicate,
     SelectAll,
     ClearSelection,
+    ZOrder(ZOrderMove),
 }
 
 /// One entry in the central shortcut registry.
@@ -807,6 +808,42 @@ const KEYBINDINGS: &[KeyBinding] = &[
         modifiers: egui::Modifiers::NONE,
         action: Action::ClearSelection,
         description: "Clear selection and return to Select",
+    },
+    KeyBinding {
+        shortcut: "Ctrl+Shift+]",
+        key: egui::Key::CloseBracket,
+        modifiers: egui::Modifiers {
+            shift: true,
+            command: true,
+            ..egui::Modifiers::NONE
+        },
+        action: Action::ZOrder(ZOrderMove::Front),
+        description: "Bring to front",
+    },
+    KeyBinding {
+        shortcut: "Ctrl+]",
+        key: egui::Key::CloseBracket,
+        modifiers: egui::Modifiers::COMMAND,
+        action: Action::ZOrder(ZOrderMove::Forward),
+        description: "Bring forward",
+    },
+    KeyBinding {
+        shortcut: "Ctrl+[",
+        key: egui::Key::OpenBracket,
+        modifiers: egui::Modifiers::COMMAND,
+        action: Action::ZOrder(ZOrderMove::Backward),
+        description: "Send backward",
+    },
+    KeyBinding {
+        shortcut: "Ctrl+Shift+[",
+        key: egui::Key::OpenBracket,
+        modifiers: egui::Modifiers {
+            shift: true,
+            command: true,
+            ..egui::Modifiers::NONE
+        },
+        action: Action::ZOrder(ZOrderMove::Back),
+        description: "Send to back",
     },
     KeyBinding {
         shortcut: "F1",
@@ -1102,6 +1139,31 @@ impl EpsilonApp {
         self.tool = Tool::Select;
     }
 
+    /// Moves the selection in paint order through one history transaction and
+    /// leaves the selection itself untouched.
+    fn move_selection_in_z_order(&mut self, movement: ZOrderMove) -> bool {
+        if !self.can_copy() || self.history_blocked() {
+            return false;
+        }
+        let ids: Vec<ElementId> = self
+            .selection_elements()
+            .iter()
+            .map(|element| element.id)
+            .collect();
+        let changes = self.document.z_order_changes(&ids, movement);
+        if changes.is_empty() {
+            return false;
+        }
+        let (before, after): (Vec<Element>, Vec<Element>) = changes.into_iter().unzip();
+        match Transaction::replace(before, after) {
+            Ok(transaction) => self.commit_transaction(transaction),
+            Err(error) => {
+                self.history_error = Some(format!("Edit failed: {error}"));
+                false
+            }
+        }
+    }
+
     fn commit_transaction(&mut self, transaction: Transaction) -> bool {
         match self.history.commit(&mut self.document, transaction) {
             Ok(()) => {
@@ -1343,6 +1405,26 @@ impl EpsilonApp {
                             self.delete_selection();
                             ui.close();
                         }
+                        ui.separator();
+                        ui.menu_button("Order", |ui| {
+                            for (label, shortcut, movement) in [
+                                ("Bring to Front", "Ctrl+Shift+]", ZOrderMove::Front),
+                                ("Bring Forward", "Ctrl+]", ZOrderMove::Forward),
+                                ("Send Backward", "Ctrl+[", ZOrderMove::Backward),
+                                ("Send to Back", "Ctrl+Shift+[", ZOrderMove::Back),
+                            ] {
+                                if ui
+                                    .add_enabled(
+                                        self.can_copy(),
+                                        egui::Button::new(label).shortcut_text(shortcut),
+                                    )
+                                    .clicked()
+                                {
+                                    self.move_selection_in_z_order(movement);
+                                    ui.close();
+                                }
+                            }
+                        });
                     });
                     ui.menu_button("View", |ui| {
                         self.theme_toggle(ui);
@@ -1549,6 +1631,9 @@ impl EpsilonApp {
             }
             Action::ClearSelection => {
                 self.clear_selection();
+            }
+            Action::ZOrder(movement) => {
+                self.move_selection_in_z_order(movement);
             }
         }
     }
@@ -4730,6 +4815,118 @@ mod tests {
         assert!(!app.help_open);
         assert_eq!(app.selected.len(), 2);
         assert_eq!(app.tool, Tool::Hand);
+    }
+
+    fn stacked_app() -> EpsilonApp {
+        let mut app = EpsilonApp::default();
+        for y in [0.0, 40.0, 80.0] {
+            app.commit_shape(
+                ElementKind::Rectangle,
+                Point::new(0.0, y),
+                Point::new(30.0, y + 20.0),
+            );
+        }
+        app
+    }
+
+    fn paint_ids(app: &EpsilonApp) -> Vec<ElementId> {
+        app.document
+            .paint_order()
+            .into_iter()
+            .map(|element| element.id)
+            .collect()
+    }
+
+    fn shift_command() -> egui::Modifiers {
+        egui::Modifiers {
+            shift: true,
+            command: true,
+            ..egui::Modifiers::NONE
+        }
+    }
+
+    #[test]
+    fn bring_to_front_and_send_to_back_preserve_the_selection_and_undo() {
+        let mut app = stacked_app();
+        let ids = paint_ids(&app);
+        let original = app.document.clone();
+        app.selected = HashSet::from([ids[0]]);
+
+        run_shortcut(&mut app, egui::Key::CloseBracket, shift_command());
+        assert_eq!(paint_ids(&app), vec![ids[1], ids[2], ids[0]]);
+        assert_eq!(app.selected, HashSet::from([ids[0]]));
+        assert_eq!(app.history.undo_len(), 4);
+
+        assert!(app.undo());
+        assert_eq!(app.document, original);
+        assert!(app.redo());
+        assert_eq!(paint_ids(&app), vec![ids[1], ids[2], ids[0]]);
+
+        app.selected = HashSet::from([ids[2]]);
+        run_shortcut(&mut app, egui::Key::OpenBracket, shift_command());
+        assert_eq!(paint_ids(&app), vec![ids[2], ids[1], ids[0]]);
+        assert_eq!(app.selected, HashSet::from([ids[2]]));
+
+        assert!(app.undo());
+        assert_eq!(paint_ids(&app), vec![ids[1], ids[2], ids[0]]);
+    }
+
+    #[test]
+    fn bring_forward_and_send_backward_move_one_slot() {
+        let mut app = stacked_app();
+        let ids = paint_ids(&app);
+        app.selected = HashSet::from([ids[0]]);
+
+        run_shortcut(&mut app, egui::Key::CloseBracket, egui::Modifiers::COMMAND);
+        assert_eq!(paint_ids(&app), vec![ids[1], ids[0], ids[2]]);
+        assert_eq!(app.selected, HashSet::from([ids[0]]));
+
+        // An element already at the front cannot move further.
+        run_shortcut(&mut app, egui::Key::CloseBracket, egui::Modifiers::COMMAND);
+        assert_eq!(paint_ids(&app), vec![ids[1], ids[2], ids[0]]);
+        let depth = app.history.undo_len();
+        run_shortcut(&mut app, egui::Key::CloseBracket, egui::Modifiers::COMMAND);
+        assert_eq!(
+            app.history.undo_len(),
+            depth,
+            "no-op must not record history"
+        );
+
+        run_shortcut(&mut app, egui::Key::OpenBracket, egui::Modifiers::COMMAND);
+        assert_eq!(paint_ids(&app), vec![ids[1], ids[0], ids[2]]);
+    }
+
+    #[test]
+    fn z_order_shortcuts_are_registered() {
+        for (key, modifiers, action) in [
+            (
+                egui::Key::CloseBracket,
+                shift_command(),
+                Action::ZOrder(ZOrderMove::Front),
+            ),
+            (
+                egui::Key::CloseBracket,
+                egui::Modifiers::COMMAND,
+                Action::ZOrder(ZOrderMove::Forward),
+            ),
+            (
+                egui::Key::OpenBracket,
+                egui::Modifiers::COMMAND,
+                Action::ZOrder(ZOrderMove::Backward),
+            ),
+            (
+                egui::Key::OpenBracket,
+                shift_command(),
+                Action::ZOrder(ZOrderMove::Back),
+            ),
+        ] {
+            assert!(
+                KEYBINDINGS.iter().any(|binding| binding.key == key
+                    && binding.modifiers == modifiers
+                    && binding.action == action),
+                "{action:?} has no shortcut"
+            );
+        }
     }
 
     #[test]

@@ -4,6 +4,14 @@ Notable changes, newest first. Version sections are added at release time.
 
 ## [Unreleased]
 
+### Added — 2026-11-26 (task 4.5)
+
+- Bring to front, bring forward, send backward and send to back for the
+  selection, via Ctrl+[ / Ctrl+] (with Shift for front/back) and an Edit →
+  Order submenu.
+- Each effective move is one undo step, preserves the selection, and skips
+  history when the order would not change.
+
 ### Added — 2026-11-26 (task 4.4)
 
 - Delete/Backspace remove the selection as one undoable transaction, with the

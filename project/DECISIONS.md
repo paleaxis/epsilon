@@ -787,3 +787,30 @@ behavior, and selection commands cannot corrupt an in-flight edit. Duplicate
 offset is deterministic and independent of grid visibility. Esc precedence is
 help, then text editor (which commits), then clear selection and return to
 Select; no command silently mutates the selection while a drag is unfinished.
+
+---
+
+## D-041 — Z-order moves are computed in core and committed as one dense Replace (2026-11-26)
+
+**Context.** Task 4.5 needs front/back and one-step forward/backward moves that
+respect multi-selection, are testable without egui, survive undo and never leave
+a stale selection. Elements are painted by ascending `z_order` with vector order
+breaking ties, and z values can in principle be imported non-dense.
+
+**Decision.** `ZOrderMove` and `Document::z_order_changes(ids, movement)` live in
+`epsilon-core::document`. The method derives the current paint order, computes
+the target order (stable block partition for front/back; descending/ascending
+adjacent swaps for forward/backward so a contiguous selection moves as one
+group), then assigns dense `0..n` paint slots and returns before/after snapshots
+only for elements whose slot changed. The app builds one `Transaction::replace`
+from those pairs and commits it through history; it does not touch `selected`.
+Shortcuts are Ctrl+Shift+] / Ctrl+] / Ctrl+[ / Ctrl+Shift+[ and the same moves
+appear under Edit → Order. Unknown IDs, all-selected scenes and moves blocked at
+the front/back return no changes, so no empty history entry is recorded.
+
+**Consequences.** Ordering semantics are pure, unit-tested and independent of the
+UI. One user action is one undo step and selection survives reorder. Rewriting
+slots densely normalises non-dense z values the first time a move touches an
+element, at the cost of sometimes replacing unselected neighbours that swap
+slots. Mid-drag and text-editing states block reorder through the existing
+`history_blocked()`/`can_copy()` gates.

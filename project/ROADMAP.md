@@ -508,11 +508,21 @@ exposes Select All, Duplicate and Delete with enabled states. Tests cover each
 shortcut, undo restore, grid-step offset, fresh IDs, empty documents, no stale
 selection and Escape precedence.
 
-### [ ] 4.5 — Z-order commands
+### [x] 4.5 — Z-order commands
 
 Bring to front/send to back, forward/backward, with menu/shortcut access.
 
 Acceptance: ordering tests; selection preserved across reorder.
+
+Completed 2026-11-26: `Document::z_order_changes` computes before/after
+paint-order changes for front, forward, backward and back moves. Front/back
+move the selection as a stable block; forward/backward move single elements one
+slot and contiguous selections as a group, leaving already-front/back or fully
+selected scenes unchanged. The app applies each effective move as one undo
+`Replace` transaction, preserves the selection, and exposes Ctrl+Shift+] /
+Ctrl+] / Ctrl+[ / Ctrl+Shift+[ plus an Edit → Order submenu. Core tests cover
+ordering and no-ops; app tests cover shortcuts, selection preservation, exact
+undo/redo and history depth.
 
 ### [ ] 4.6 — Context menus
 

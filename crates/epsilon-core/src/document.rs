@@ -452,6 +452,15 @@ impl Element {
     }
 }
 
+/// A paint-order movement for a selection. Front is drawn last; Back first.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ZOrderMove {
+    Front,
+    Forward,
+    Backward,
+    Back,
+}
+
 /// A complete document: schema version, canvas settings and ordered elements.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Document {
@@ -501,6 +510,70 @@ impl Document {
                 .then(left_index.cmp(right_index))
         });
         elements.into_iter().map(|(_, element)| element).collect()
+    }
+
+    /// Computes the before/after snapshots for moving `ids` in paint order.
+    ///
+    /// `Front`/`Back` move the whole selection to the end/start while keeping
+    /// its relative order. `Forward`/`Backward` move each selected element one
+    /// slot in that direction, so a contiguous block moves as a group and
+    /// unselected neighbours swap past it. The result is empty when nothing
+    /// would change. Paint-order indices are written back as dense `z_order`
+    /// values, so only elements whose slot actually moved are returned.
+    pub fn z_order_changes(
+        &self,
+        ids: &[ElementId],
+        movement: ZOrderMove,
+    ) -> Vec<(Element, Element)> {
+        let current: Vec<ElementId> = self
+            .paint_order()
+            .into_iter()
+            .map(|element| element.id)
+            .collect();
+        if current.is_empty() || !current.iter().any(|id| ids.contains(id)) {
+            return Vec::new();
+        }
+
+        let mut next = current.clone();
+        match movement {
+            ZOrderMove::Front => {
+                // Stable sort keeps the selection's relative paint order.
+                next.sort_by_key(|id| ids.contains(id));
+            }
+            ZOrderMove::Back => {
+                next.sort_by_key(|id| !ids.contains(id));
+            }
+            ZOrderMove::Forward => {
+                for index in (0..next.len().saturating_sub(1)).rev() {
+                    if ids.contains(&next[index]) && !ids.contains(&next[index + 1]) {
+                        next.swap(index, index + 1);
+                    }
+                }
+            }
+            ZOrderMove::Backward => {
+                for index in 1..next.len() {
+                    if ids.contains(&next[index]) && !ids.contains(&next[index - 1]) {
+                        next.swap(index - 1, index);
+                    }
+                }
+            }
+        }
+        if next == current {
+            return Vec::new();
+        }
+
+        next.iter()
+            .enumerate()
+            .filter_map(|(index, id)| {
+                let element = self.element(*id)?;
+                let z_order = i32::try_from(index).ok()?;
+                (element.z_order != z_order).then(|| {
+                    let mut after = element.clone();
+                    after.z_order = z_order;
+                    (element.clone(), after)
+                })
+            })
+            .collect()
     }
 
     pub fn element(&self, id: ElementId) -> Option<&Element> {
@@ -599,6 +672,115 @@ mod tests {
             order,
             vec![ElementId::new(2), ElementId::new(3), ElementId::new(1)]
         );
+    }
+
+    fn three_stacked_elements() -> Document {
+        let mut document = Document::new();
+        for (id, z_order) in [(1, 0), (2, 1), (3, 2)] {
+            let mut element = Element::with_id(
+                ElementId::new(id),
+                ElementKind::Rectangle,
+                0.0,
+                0.0,
+                10.0,
+                10.0,
+            );
+            element.z_order = z_order;
+            document.elements.push(element);
+        }
+        document
+    }
+
+    fn paint_ids(document: &Document) -> Vec<u64> {
+        document
+            .paint_order()
+            .into_iter()
+            .map(|element| element.id.get())
+            .collect()
+    }
+
+    fn apply_changes(document: &mut Document, changes: &[(Element, Element)]) {
+        for (_, after) in changes {
+            let current = document
+                .elements
+                .iter_mut()
+                .find(|element| element.id == after.id)
+                .expect("changed element exists");
+            *current = after.clone();
+        }
+    }
+
+    #[test]
+    fn z_order_front_and_back_move_the_selection_as_a_block() {
+        let mut document = three_stacked_elements();
+        let changes = document.z_order_changes(&[ElementId::new(1)], ZOrderMove::Front);
+        assert_eq!(
+            changes.len(),
+            3,
+            "normalising slots touches each moved element"
+        );
+        apply_changes(&mut document, &changes);
+        assert_eq!(paint_ids(&document), vec![2, 3, 1]);
+        assert_eq!(document.element(ElementId::new(1)).unwrap().z_order, 2);
+
+        let changes = document.z_order_changes(&[ElementId::new(3)], ZOrderMove::Back);
+        apply_changes(&mut document, &changes);
+        assert_eq!(paint_ids(&document), vec![3, 2, 1]);
+    }
+
+    #[test]
+    fn z_order_forward_and_backward_move_one_slot_and_group_blocks() {
+        let mut document = three_stacked_elements();
+        let changes = document.z_order_changes(&[ElementId::new(1)], ZOrderMove::Forward);
+        apply_changes(&mut document, &changes);
+        assert_eq!(paint_ids(&document), vec![2, 1, 3]);
+
+        let changes = document.z_order_changes(&[ElementId::new(1)], ZOrderMove::Forward);
+        apply_changes(&mut document, &changes);
+        assert_eq!(paint_ids(&document), vec![2, 3, 1]);
+
+        // An element already at the front cannot move further.
+        assert!(
+            document
+                .z_order_changes(&[ElementId::new(1)], ZOrderMove::Forward)
+                .is_empty()
+        );
+
+        let changes = document.z_order_changes(&[ElementId::new(3)], ZOrderMove::Backward);
+        apply_changes(&mut document, &changes);
+        assert_eq!(paint_ids(&document), vec![3, 2, 1]);
+
+        // A contiguous selection moves back as a group.
+        let mut group = three_stacked_elements();
+        let changes = group.z_order_changes(
+            &[ElementId::new(2), ElementId::new(3)],
+            ZOrderMove::Backward,
+        );
+        apply_changes(&mut group, &changes);
+        assert_eq!(paint_ids(&group), vec![2, 3, 1]);
+    }
+
+    #[test]
+    fn z_order_changes_ignore_unknown_ids_and_no_ops() {
+        let document = three_stacked_elements();
+        assert!(
+            document
+                .z_order_changes(&[ElementId::new(99)], ZOrderMove::Front)
+                .is_empty()
+        );
+        assert!(
+            document
+                .z_order_changes(&[ElementId::new(1)], ZOrderMove::Backward)
+                .is_empty()
+        );
+        assert!(
+            document
+                .z_order_changes(&[ElementId::new(3)], ZOrderMove::Forward)
+                .is_empty()
+        );
+        let all = [ElementId::new(1), ElementId::new(2), ElementId::new(3)];
+        assert!(document.z_order_changes(&all, ZOrderMove::Front).is_empty());
+        assert!(document.z_order_changes(&all, ZOrderMove::Back).is_empty());
     }
 
     #[test]
