@@ -170,8 +170,8 @@ command carries enough data to apply and revert, coalescing continuous drags
 into one history entry. The app submits transactions; core never asks the UI for
 state.
 
-**Consequences.** Commands must be tested for round-trip equality. Exact data
-structures are finalized in task 4.1, not before.
+**Consequences.** Commands must be tested for round-trip equality. The final data
+structures are recorded in D-037 (task 4.1).
 
 ---
 
@@ -667,3 +667,31 @@ write one resolved style to every selected element.
 **Consequences.** Panel state always follows the current selection and edits
 update the canvas immediately. Undo will wrap these mutations when Stage 4
 lands; until then each edit is a direct document change.
+
+---
+
+## D-037 — History stores reversible commands, not document snapshots (2026-11-25)
+
+**Context.** Task 4.1 needs undo/redo with drag coalescing, bounded memory and
+exact document restoration, without cloning the whole document for every edit.
+
+**Decision.** `epsilon-core::history` defines an `Insert`, `Remove` and `Replace`
+command enum. Each command carries only the affected elements: inserts keep the
+target vector index, removals keep each element plus its original index, and
+replacements keep before/after snapshots matched by `ElementId`. `Transaction`
+groups commands for one user action and applies or reverts them atomically;
+commands validate before mutating, and a failed transaction rolls back the
+commands it already applied. `History` applies committed transactions, keeps a
+redo stack that is discarded by a new commit, and trims the undo stack to
+`limit` entries (default 100, configured with `with_limit`; zero means edits are
+applied but not undoable). Repeated drag updates use `commit_coalescing`, which
+merges consecutive single-`Replace` transactions touching the same IDs: the
+first before-state and last after-state win. Separating user actions must use
+plain `commit`. History is session-only and is not serialized into documents.
+
+**Consequences.** Memory is proportional to edited elements rather than total
+scene size, vector order and `z_order` restore exactly, and undo/redo equality is
+testable without serialization. The app must route every mutation through a
+transaction for it to be undoable; task 4.2 wires shape creation, transforms,
+style edits and text commits accordingly. Direct document mutation outside the
+history remains possible at the API level and is intentionally not tracked.

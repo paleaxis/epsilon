@@ -1,9 +1,9 @@
 # Project State
 
-Last updated: 2026-11-23
-Current stage: **Stage 3 — Drawing engine**
-Last completed task: **3.14 — Properties panel binding** (Stage 3 complete)
-Next task: **4.1 — Command/history system (core)**
+Last updated: 2026-11-25
+Current stage: **Stage 4 — Editing experience**
+Last completed task: **4.1 — Command/history system (core)**
+Next task: **4.2 — Undo/redo integration**
 
 ## Status
 
@@ -12,7 +12,9 @@ theme toggle and About. Theme/tool settings and window/panel state persist from
 task 1.8 (completed early). The canvas pans, zooms, shows an adaptive grid, and
 the Rectangle, Ellipse, Diamond, Line, Arrow and Freehand tools create
 persistent in-memory shapes with live previews, and the Text tool places and
-edits multiline text in the canvas.
+edits multiline text in the canvas. Core now provides a bounded,
+transaction-based undo/redo history that stores reversible commands instead of
+document snapshots; the app does not use it yet (task 4.2).
 
 Repository layout:
 
@@ -24,6 +26,7 @@ project/                    STATE, ROADMAP, DECISIONS, CHANGELOG
 crates/epsilon-core/        UI-independent engine (no egui dependency)
   src/geometry.rs           Point, Rect, shapes, rough strokes + 29 tests
   src/document.rs           schema-versioned document, shapes, text, styles, paint order
+  src/history.rs            reversible commands, transactions, bounded undo/redo + 9 tests
 crates/epsilon-app/         eframe desktop shell
   src/main.rs               native entry point (persist_window enabled)
   src/layout.rs             shell size budgets + compile-time assertions
@@ -70,24 +73,27 @@ Other shell behavior:
   `Context::egui_wants_keyboard_input()`; `cc.storage` is a field.
 - Remote: `origin git@github.com/paleaxis/epsilon.git`, branch `main`.
 
-## Verified commands and results (task 3.14)
+## Verified commands and results (task 4.1)
 
 | Command | Result |
 | --- | --- |
 | `cargo fmt --all -- --check` | exit 0 |
 | `cargo clippy --workspace --all-targets -- -D warnings` | exit 0 |
-| `cargo test --workspace` | **114 passed, 0 failed** (56 app, 58 core) |
+| `cargo test --workspace` | **123 passed, 0 failed** (56 app, 67 core) |
 | `cargo build --workspace` | success, no warnings |
 | `timeout 8 ./target/debug/epsilon` | exit 124 (alive, no stderr) |
 
-Task 3.14 tests cover mixed-value property reporting, live position/size/angle
-edits, selection-wide style application and a headless panel frame. The suite
-also retains shell, persistence, viewport, grid, document, styling, rough
-rendering and earlier shape coverage.
+Task 4.1 tests cover undo/redo ordering, exact document equality after full
+undo/redo cycles, transaction grouping as one undo step, redo-branch discard on
+a new edit, the history memory bound, multi-element removal/reinsertion order,
+failed-commit atomicity and drag coalescing. The suite also retains shell,
+persistence, viewport, grid, document, styling, rough rendering and earlier
+shape coverage.
 
-Native launch was verified by process liveness. Menu clicks and keyboard
-navigation were not automated or visually reviewed; only the action functions
-behind them are tested.
+Native launch was verified by process liveness; task 4.1 touched core only, so
+no new UI interaction was added. Menu clicks and keyboard navigation were not
+automated or visually reviewed; only the action functions behind them are
+tested.
 
 ## Features implemented
 
@@ -121,6 +127,8 @@ behind them are tested.
   toggle.
 - Live transform and style binding in the properties panel, including mixed
   values for multi-selection.
+- UI-independent command history with insert/remove/replace commands, grouped
+  transactions, bounded undo stack, redo branching and drag coalescing.
 - Persisted theme/tool; eframe-persisted window geometry and panel widths.
 - Tool palette with shortcuts, painted icons and accessible names.
 - Dark/light themes with central palette and contrast tests.
@@ -154,7 +162,8 @@ automation allowed). Items requiring a human reviewer:
 - Edit menu and formatting actions are not implemented (Stage 4); File has only
   Quit until document I/O (Stage 5).
 - Shell polish and manual verification pass remains (1.9).
-- Undo/redo and command history remain pending (Stage 4).
+- Core history exists, but the app does not feed edits into it and no
+  undo/redo shortcuts or buttons exist yet (task 4.2).
 - No CI; local verification only. No visual/screenshot review performed.
 - Window/panel restore relies on eframe/egui and was not re-measured under niri.
 - Project license: GPL-3.0 (`LICENSE`); manifests declare `GPL-3.0-only`.
@@ -163,7 +172,7 @@ automation allowed). Items requiring a human reviewer:
 
 1. Read `AGENTS.md`, `project/ROADMAP.md`, this file, `project/DECISIONS.md`.
 2. `git status` must be clean; run `cargo test --workspace` for the baseline.
-3. Stop before Stage 4 until the owner requests it.
+3. Start with the first incomplete task, 4.2 — Undo/redo integration.
 4. Verify format, clippy, tests, build, and `timeout 8 ./target/debug/epsilon`.
 5. Update this file, `ROADMAP.md`, `CHANGELOG.md`, then commit and push.
 

@@ -4,6 +4,13 @@ Notable changes, newest first. Version sections are added at release time.
 
 ## [Unreleased]
 
+### Added — 2026-11-25 (task 4.1)
+
+- Core transaction-based undo/redo history with reversible insert, remove and
+  replace commands that store only changed elements.
+- Bounded undo stack, redo-branch discard, atomic failed commits and drag
+  update coalescing, covered by ordering, equality and memory-bound tests.
+
 ### Added — 2026-11-23 (task 3.14)
 
 - Live properties binding for position, size, angle and style, with mixed-value

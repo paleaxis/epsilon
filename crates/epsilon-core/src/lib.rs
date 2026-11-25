@@ -9,11 +9,12 @@
 //! - [`geometry`] — 2D primitives shared by every layer (done, Stage 0).
 //! - [`document`] — document envelope, elements and their styling (Stage 3).
 //! - [`viewport`] — camera, zoom and screen/world transforms (Stage 2).
-//! - `history` — transaction-based undo/redo (Stage 4).
+//! - [`history`] — transaction-based undo/redo (Stage 4).
 //! - `io` — native document format and Excalidraw import/export (Stage 5).
 //! - `export` — PNG/SVG export (Stage 6).
 
 pub mod document;
 pub mod geometry;
 pub mod grid;
+pub mod history;
 pub mod viewport;

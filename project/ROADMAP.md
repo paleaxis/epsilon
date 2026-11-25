@@ -434,13 +434,22 @@ command history as specified.
 
 ## Stage 4 — Editing experience
 
-### [ ] 4.1 — Command/history system (core)
+### [x] 4.1 — Command/history system (core)
 
 Transaction-based history: commands with apply/revert, coalescing for drags,
 bounded memory, no full-document clones.
 
 Acceptance: unit tests for undo/redo ordering, branching after undo, and memory
 bound; document equality checks after undo/redo cycles.
+
+Completed 2026-11-25: `epsilon-core::history` provides insert/remove/replace
+commands that store only the affected elements, grouped into transactions.
+`History` applies edits, keeps a bounded undo stack (100 entries by default),
+discards redo branches on new edits and coalesces repeated drag replacements
+into one entry. Nine tests cover ordering, full undo/redo document equality,
+transaction grouping, branch discard, the memory bound, removal order,
+failed-commit atomicity and coalescing. The app does not consume the history
+yet.
 
 ### [ ] 4.2 — Undo/redo integration
 
