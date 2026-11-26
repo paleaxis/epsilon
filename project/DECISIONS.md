@@ -988,3 +988,25 @@ autosaves survive a corrupt newest file, and cleanup is bounded and tested
 headlessly. Autosaves include document data, so the app-data directory should be
 treated as document storage (no telemetry/cloud). The live timer and launch modal
 remain manual checks.
+
+---
+
+## D-049 — Recent documents are a bounded core list persisted in app settings, with stale entries removed lazily (2026-11-26)
+
+**Context.** Task 5.5 needs a recent list in the File menu and welcome state,
+deduplication, a cap, persistence, and graceful handling of deleted files.
+
+**Decision.** Core `recent::RecentFiles` stores at most eight `PathBuf`s,
+most-recent first, deduplicated by exact path. It is a serde-transparent field
+in `PersistedSettings` (`epsilon.settings`), not document data. Successful
+save/open records the path; File → Open Recent and the dismissible welcome panel
+list names with full paths as hover text. Clicking a stale path removes it and
+reports an error instead of attempting a read. Recent opens route through the
+same unsaved-changes guard as File → Open, carrying an optional path in
+`PendingAction::Open`. "Clear Recent" resets the list. No filesystem watcher is
+introduced; missing files are handled on interaction.
+
+**Consequences.** The list is deterministic, bounded and testable without UI,
+and persistence reuses the existing eframe settings path. Stale entries remain
+visible until clicked or explicitly cleared, which avoids blocking startup on
+network/slow filesystems.

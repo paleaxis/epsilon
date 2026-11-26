@@ -16,6 +16,7 @@ use epsilon_core::geometry::{
 };
 use epsilon_core::grid;
 use epsilon_core::history::{History, Transaction};
+use epsilon_core::recent::RecentFiles;
 use epsilon_core::recovery::{RECOVERY_SOURCE_KEY, RecoveryStore};
 use epsilon_core::viewport::Viewport;
 
@@ -40,6 +41,8 @@ struct PersistedSettings {
     grid_enabled: bool,
     #[serde(default)]
     clean_rendering: bool,
+    #[serde(default)]
+    recent: RecentFiles,
 }
 
 /// How often an unsaved dirty document is written to the recovery directory.
@@ -544,10 +547,10 @@ enum FileFeedback {
     Error(String),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum PendingAction {
     New,
-    Open,
+    Open(Option<PathBuf>),
     Quit,
 }
 
@@ -695,6 +698,10 @@ pub struct EpsilonApp {
     saved_document: Document,
     /// Result of the last save/open command.
     file_feedback: Option<FileFeedback>,
+    /// Persisted most-recently-used document paths.
+    recent: RecentFiles,
+    /// Whether the startup welcome panel is still open.
+    welcome_open: bool,
     /// Last window title sent to the compositor, to avoid repeating commands.
     last_window_title: String,
     /// Reversible edit history for the document.
@@ -761,6 +768,8 @@ impl Default for EpsilonApp {
             allow_close: false,
             saved_document: Document::default(),
             file_feedback: None,
+            recent: RecentFiles::new(),
+            welcome_open: true,
             last_window_title: String::new(),
             history: History::default(),
             history_error: None,
@@ -1138,6 +1147,7 @@ impl EpsilonApp {
             app.tool = settings.tool;
             app.grid_enabled = settings.grid_enabled;
             app.clean_rendering = settings.clean_rendering;
+            app.recent = settings.recent;
         }
         app
     }
@@ -1550,6 +1560,7 @@ impl EpsilonApp {
             Ok(()) => {
                 self.file_path = Some(path.to_path_buf());
                 self.saved_document = self.document.clone();
+                self.recent.record(path.to_path_buf());
                 self.last_autosave = Instant::now();
                 self.discard_recovery_files();
                 self.file_feedback = Some(FileFeedback::Saved(format!("Saved {name}")));
@@ -1588,6 +1599,7 @@ impl EpsilonApp {
                 self.paste_count = 0;
                 self.file_path = Some(path.to_path_buf());
                 self.saved_document = self.document.clone();
+                self.recent.record(path.to_path_buf());
                 self.last_autosave = Instant::now();
                 self.discard_recovery_files();
                 self.file_feedback = Some(FileFeedback::Opened(format!("Opened {name}")));
@@ -1655,9 +1667,33 @@ impl EpsilonApp {
             return;
         }
         if self.is_dirty() {
-            self.pending_action = Some(PendingAction::Open);
+            self.pending_action = Some(PendingAction::Open(None));
         } else {
             self.open_document_dialog();
+        }
+    }
+
+    /// Opens a recent entry after the shared unsaved guard. Stale entries are
+    /// removed and reported instead of attempting a read.
+    fn open_recent(&mut self, path: &Path) {
+        if self.history_blocked() {
+            self.file_feedback = Some(FileFeedback::Error(
+                "Finish the current edit before opening a file".to_owned(),
+            ));
+            return;
+        }
+        if !path.is_file() {
+            self.recent.remove(path);
+            self.file_feedback = Some(FileFeedback::Error(format!(
+                "File no longer exists: {}",
+                path.display()
+            )));
+            return;
+        }
+        if self.is_dirty() {
+            self.pending_action = Some(PendingAction::Open(Some(path.to_path_buf())));
+        } else {
+            self.open_from_path(path);
         }
     }
 
@@ -1730,12 +1766,69 @@ impl EpsilonApp {
         };
         match action {
             PendingAction::New => self.new_document(),
-            PendingAction::Open => self.open_document_dialog(),
+            PendingAction::Open(None) => self.open_document_dialog(),
+            PendingAction::Open(Some(path)) => {
+                self.open_from_path(&path);
+            }
             PendingAction::Quit => {
                 self.allow_close = true;
                 self.discard_recovery_files();
                 request_quit(ctx);
             }
+        }
+    }
+
+    fn welcome_window(&mut self, ctx: &egui::Context) {
+        if !self.welcome_open
+            || self.is_dirty()
+            || !self.document.elements.is_empty()
+            || self.file_path.is_some()
+            || self.pending_action.is_some()
+            || self.recovery_offer.is_some()
+        {
+            return;
+        }
+        let recent = self.recent.clone();
+        let mut open = None;
+        let mut dismiss = false;
+        egui::Window::new("Welcome to Epsilon")
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+            .show(ctx, |ui| {
+                ui.label("Draw with the toolbar or press a tool shortcut.");
+                ui.label(
+                    RichText::new("Open or create a document from the File menu.")
+                        .small()
+                        .weak(),
+                );
+                if !recent.is_empty() {
+                    ui.separator();
+                    ui.label("Recent documents");
+                    for path in recent.paths() {
+                        let name = path
+                            .file_name()
+                            .map(|name| name.to_string_lossy().into_owned())
+                            .unwrap_or_else(|| path.display().to_string());
+                        if ui
+                            .button(name)
+                            .on_hover_text(path.display().to_string())
+                            .clicked()
+                        {
+                            open = Some(path.clone());
+                        }
+                    }
+                }
+                ui.separator();
+                if ui.button("Close").clicked() {
+                    dismiss = true;
+                }
+            });
+        if let Some(path) = open {
+            self.welcome_open = false;
+            self.open_recent(&path);
+        } else if dismiss {
+            self.welcome_open = false;
         }
     }
 
@@ -2150,6 +2243,31 @@ impl EpsilonApp {
                         {
                             self.save_document_as();
                             ui.close();
+                        }
+                        if !self.recent.is_empty() {
+                            ui.separator();
+                            let recent = self.recent.clone();
+                            ui.menu_button("Open Recent", |ui| {
+                                for path in recent.paths() {
+                                    let name = path
+                                        .file_name()
+                                        .map(|name| name.to_string_lossy().into_owned())
+                                        .unwrap_or_else(|| path.display().to_string());
+                                    if ui
+                                        .button(name)
+                                        .on_hover_text(path.display().to_string())
+                                        .clicked()
+                                    {
+                                        self.open_recent(path);
+                                        ui.close();
+                                    }
+                                }
+                                ui.separator();
+                                if ui.button("Clear Recent").clicked() {
+                                    self.recent = RecentFiles::new();
+                                    ui.close();
+                                }
+                            });
                         }
                         ui.separator();
                         if ui.button("Quit").clicked() {
@@ -4297,6 +4415,7 @@ impl eframe::App for EpsilonApp {
         self.sync_window_title(ui.ctx());
         let canvas_rect = self.show_shell(ui);
         self.handle_shortcuts(ui.ctx(), canvas_rect);
+        self.welcome_window(ui.ctx());
         self.recovery_window(ui.ctx());
         self.unsaved_changes_window(ui.ctx());
         self.about_window(ui.ctx());
@@ -4312,6 +4431,7 @@ impl eframe::App for EpsilonApp {
                 tool: self.tool,
                 grid_enabled: self.grid_enabled,
                 clean_rendering: self.clean_rendering,
+                recent: self.recent.clone(),
             },
         );
     }
@@ -5187,6 +5307,7 @@ mod tests {
             clean_rendering: true,
             ..Default::default()
         };
+        app.recent.record("/tmp/recent.epsilon");
         let mut storage = TestStorage::default();
         eframe::App::save(&mut app, &mut storage);
 
@@ -5194,6 +5315,10 @@ mod tests {
         assert_eq!(restored.theme, Theme::Light);
         assert_eq!(restored.tool, Tool::Arrow);
         assert!(restored.clean_rendering);
+        assert_eq!(
+            restored.recent.paths(),
+            &[PathBuf::from("/tmp/recent.epsilon")]
+        );
     }
 
     #[test]
@@ -5814,6 +5939,70 @@ mod tests {
         next.discard_recovery_files();
         assert!(next.document.elements.is_empty());
         assert!(store.latest_path().expect("list recovery").is_none());
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn saving_and_opening_record_recent_documents() {
+        let dir = file_test_dir("recent");
+        let path = dir.join("scene.epsilon");
+        let mut app = selection_app();
+        assert!(app.save_to_path(&path));
+        assert_eq!(app.recent.paths(), std::slice::from_ref(&path));
+
+        // Saving again moves the path to the front without duplicating it.
+        assert!(app.save_to_path(&path));
+        assert_eq!(app.recent.paths(), std::slice::from_ref(&path));
+
+        let mut restored = EpsilonApp::default();
+        assert!(restored.open_from_path(&path));
+        assert_eq!(restored.recent.paths()[0], path);
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn missing_recent_files_are_removed_without_touching_the_scene() {
+        let dir = file_test_dir("recent-missing");
+        let missing = dir.join("gone.epsilon");
+        let mut app = selection_app();
+        let original = app.document.clone();
+        app.recent.record(missing.clone());
+
+        app.open_recent(&missing);
+        assert!(app.recent.is_empty());
+        assert_eq!(app.document, original);
+        assert!(matches!(
+            app.file_feedback,
+            Some(FileFeedback::Error(ref message)) if message.contains("no longer exists")
+        ));
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn recent_open_respects_the_unsaved_guard() {
+        let dir = file_test_dir("recent-guard");
+        let path = dir.join("scene.epsilon");
+        let mut saved = selection_app();
+        assert!(saved.save_to_path(&path));
+        let saved_document = saved.document.clone();
+
+        let mut app = selection_app();
+        app.commit_shape(
+            ElementKind::Rectangle,
+            Point::new(300.0, 300.0),
+            Point::new(340.0, 340.0),
+        );
+        app.open_recent(&path);
+        assert_eq!(
+            app.pending_action,
+            Some(PendingAction::Open(Some(path.clone())))
+        );
+        app.resolve_unsaved(&egui::Context::default(), UnsavedChoice::Discard);
+        assert_eq!(app.document, saved_document);
+        assert_eq!(app.recent.paths()[0], path);
 
         std::fs::remove_dir_all(&dir).ok();
     }

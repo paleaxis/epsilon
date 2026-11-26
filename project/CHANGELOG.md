@@ -4,6 +4,11 @@ Notable changes, newest first. Version sections are added at release time.
 
 ## [Unreleased]
 
+### Added — 2026-11-26 (task 5.5)
+
+- Persisted recent-document list (max 8) in File → Open Recent and a welcome
+  panel, with deduplication, clear-all and stale-entry removal.
+
 ### Added — 2026-11-26 (task 5.4)
 
 - 30-second autosave of dirty documents into a rotating app-data recovery

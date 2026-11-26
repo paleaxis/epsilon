@@ -671,12 +671,19 @@ naming, retention, corrupt-newest fallback, a simulated crash/recover, reset
 state and discard. The live 30-second timer and launch modal were not manually
 tested.
 
-### [ ] 5.5 — Recent documents
+### [x] 5.5 — Recent documents
 
 Recent file list in File menu and welcome state, persisted settings, missing-file
 handling.
 
-Acceptance: list deduplicates, caps length, handles missing files gracefully.
+Completed 2026-11-26: core `RecentFiles` keeps up to eight exact paths,
+deduplicated and most-recent first. The app persists the list in `app.ron`,
+records successful saves/opens, exposes File → Open Recent with Clear Recent,
+and lists recent files in a dismissible welcome panel for empty untitled
+documents. Missing entries are removed and reported when clicked, without
+touching the current scene, and recent opens use the unsaved guard. Tests cover
+dedup/cap/prune/serde, persistence, recording, guard and missing-file handling;
+the live menus/welcome panel were not clicked.
 
 ### [ ] 5.6 — Excalidraw import
 
