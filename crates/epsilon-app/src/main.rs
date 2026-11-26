@@ -3,6 +3,7 @@
 mod app;
 mod export;
 mod layout;
+mod svg;
 mod theme;
 mod tools;
 

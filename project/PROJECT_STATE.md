@@ -2,8 +2,8 @@
 
 Last updated: 2026-11-26
 Current stage: **Stage 6 — Export**
-Last completed task: **6.2 — PNG export pipeline**
-Next task: **6.3 — SVG export**
+Last completed task: **6.3 — SVG export**
+Next task: **6.4 — Export UI**
 
 ## Status
 
@@ -51,8 +51,10 @@ types, future Excalidraw versions, malformed JSON and native future-version
 rejection. PNG export is implemented: core computes crop bounds, 1x/2x/4x/custom
 scales, background/transparent choice and size limits, and the app rasterizes
 every element kind deterministically with `tiny-skia` paths and `fontdue`
-glyphs. File → Export PNG… writes the cropped image atomically. Export-dialog
-options and SVG output remain tasks 6.3–6.4.
+glyphs. File → Export PNG… writes the cropped image atomically. SVG export
+writes the same cropped scene as world-unit vector primitives with text as
+`<text>`, rough/dashed strokes, hatch fills, arrowheads and paint order intact.
+Export-dialog options (selection, scale, filename) remain task 6.4.
 
 Repository layout:
 
@@ -79,6 +81,7 @@ crates/epsilon-app/         eframe desktop shell
   src/theme.rs              semantic palettes, Visuals setup, serializable Theme
   src/tools.rs              Tool enum, shortcuts, painted icons, tool buttons
   src/export.rs             deterministic PNG rasterizer + 6 tests
+  src/svg.rs                deterministic SVG exporter + 4 tests
   src/app.rs                EpsilonApp, menus, toolbar, tool state, history wiring, settings
 ```
 
@@ -86,7 +89,7 @@ Working UI actions:
 
 | Where | Action |
 | --- | --- |
-| File menu | New/Open/Save/Save As, Excalidraw import/export, Export PNG, Open Recent, Quit (sends `ViewportCommand::Close`) |
+| File menu | New/Open/Save/Save As, Excalidraw import/export, Export PNG/SVG, Open Recent, Quit (sends `ViewportCommand::Close`) |
 | Edit menu | Undo/Redo (history-aware), Cut/Copy/Paste, Select All, Duplicate, Delete and Order (front/forward/backward/back) |
 | View menu | Dark mode, grid and clean-rendering toggles, applied immediately |
 | Help menu | About Epsilon (dialog) |
@@ -155,27 +158,26 @@ Other shell behavior:
   `Context::egui_wants_keyboard_input()`; `cc.storage` is a field.
 - Remote: `origin git@github.com/paleaxis/epsilon.git`, branch `main`.
 
-## Verified commands and results (task 6.2)
+## Verified commands and results (task 6.3)
 
 | Command | Result |
 | --- | --- |
 | `cargo fmt --all -- --check` | exit 0 |
 | `cargo clippy --workspace --all-targets -- -D warnings` | exit 0 |
-| `cargo test --workspace` | **228 passed, 0 failed** (111 app, 112 core, 5 compat) |
+| `cargo test --workspace` | **233 passed, 0 failed** (116 app, 112 core, 5 compat) |
 | `cargo build --workspace` | success, no warnings |
 | `timeout 8 ./target/debug/epsilon` | exit 124 (alive, no stderr) |
 
-Task 6.2 adds `epsilon-core::export` (crop bounds, scale presets/custom, size
-limits, 8 tests) and `epsilon-app::export` (deterministic tiny-skia/fontdue
-rasterizer plus a File → Export PNG path, 7 tests including an on-disk decode).
-The 6.1 spike test was superseded by the production pipeline and removed. Tests
-cover expected dimensions at 1x/2x/4x/custom, content pixels reaching the crop
-edges, transparent corners, glyph pixels, byte-identical repeat renders,
-oversized rejection and the atomic file write. Native launch was verified by
-process liveness; the exported PNG was decoded but not visually inspected.
-Native dialogs were not clicked, and an Excalidraw export was not opened in the
-real Excalidraw application (manual acceptance item remains). Images/`files`,
-frames, bindings and arrowhead variants are not fully mapped.
+Task 6.3 adds `epsilon-app::svg` (4 tests: cropped viewBox/dimensions, empty
+scenes, every element kind, paint order/determinism) and a File → Export SVG
+path with an on-disk round-trip app test. The PNG pipeline from 6.2 remains
+covered by core export geometry (8 tests) and the tiny-skia/fontdue rasterizer
+(6 tests plus an on-disk decode). Native launch was verified by process
+liveness; the exported SVG was validated as markup but not rendered or visually
+compared with the canvas. Native dialogs were not clicked, and an Excalidraw
+export was not opened in the real Excalidraw application (manual acceptance item
+remains). Images/`files`, frames, bindings and arrowhead variants are not fully
+mapped.
 
 ## Features implemented
 
@@ -253,6 +255,9 @@ frames, bindings and arrowhead variants are not fully mapped.
   scenes, unknown fields/types, future versions and malformed inputs.
 - PNG export pipeline: core crop bounds/scales/limits and a deterministic
   `tiny-skia`/`fontdue` rasterizer wired to File → Export PNG.
+- SVG export for every element kind with the same cropped viewBox, rotation,
+  rough/dash/dot strokes, hatch fills, arrowheads, multi-line text and stable
+  paint order, wired to File → Export SVG.
 - PNG export with scene-bounds cropping, 1x/2x/4x/custom scale, optional
 transparent background, deterministic element rasterization (rough strokes,
 dash/dot strokes, hatch fills, arrowheads, wrapped text), export size limits and
@@ -326,21 +331,42 @@ result were not inspected:
 Status: **pending** — not performed in this environment. Rotated text and full
 egui text shaping are known fidelity gaps (D-053).
 
+## Manual acceptance checklist — SVG export (task 6.3)
+
+Automated tests cover the cropped viewBox and dimensions, every element kind,
+paint order, determinism and an on-disk export. The rendered result was not
+compared with the canvas:
+
+- [ ] Launch `./target/debug/epsilon` and draw shapes with fill, rough strokes,
+  dashed/dotted strokes, hatch fill, an arrow and rotated text.
+- [ ] File → Export SVG…, save `/tmp/epsilon-export-check.svg`.
+- [ ] Open the SVG in a browser or vector editor and confirm the crop matches
+  the drawing, paint order and colors match, and strokes are not clipped.
+- [ ] Confirm multi-line text appears with the expected alignment and fallback
+  font; compare its wrapping with the canvas and note differences.
+- [ ] Export an empty document and confirm the status bar reports that there is
+  nothing to export instead of writing a file.
+
+Status: **pending** — not performed in this environment.
+
 ## Known issues / limitations
 
 - Edit contains Undo/Redo, Cut/Copy/Paste, Select All, Duplicate, Delete, Group,
   Ungroup, Order and the Arrange alignment/distribution submenu. File has
   New/Open/Open Recent/Save/Save As, Excalidraw Import/Export and Quit with the
   unsaved-changes guard. Excalidraw images/frames/bindings are not mapped yet.
-- Stage 5 is complete; Stage 6 now has the PNG pipeline. SVG, clipboard image
+- Stage 5 is complete; Stage 6 now has PNG and SVG pipelines. Clipboard image
   export and the export dialog (selection vs canvas, scale, filename) remain.
   Manual acceptance remains for opening an Excalidraw export in the real app,
-  visually checking a PNG export and clicking native dialogs/menus.
+  visually checking PNG/SVG exports and clicking native dialogs/menus.
 - PNG text uses `fontdue` per-glyph advances and greedy word wrapping, not
   egui's shaping/kerning; rotated text is exported unrotated. Rough strokes are
   deterministic but not pixel-identical to the canvas anti-aliasing.
-- File → Export PNG always exports the whole document at 1x with the document
-  background; scale and selection options arrive with task 6.4.
+- File → Export PNG/SVG always export the whole document at 1x with the
+  document background; scale and selection options arrive with task 6.4.
+- SVG text is emitted as `<text>` with explicit-newline only wrapping and a
+  generic sans-serif fallback, so its appearance depends on the viewer's font
+  and is not pixel-identical to the canvas (D-054).
 - Arrange commands have no keyboard shortcuts; they are available only from the
   Edit menu, and the menu itself was not clicked in a live window.
 - Z-order moves rewrite paint slots densely (0..n), so elements whose slot
@@ -363,7 +389,7 @@ egui text shaping are known fidelity gaps (D-053).
 
 1. Read `AGENTS.md`, `project/ROADMAP.md`, this file, `project/DECISIONS.md`.
 2. `git status` must be clean; run `cargo test --workspace` for the baseline.
-3. Start with the first incomplete task, 6.3 — SVG export.
+3. Start with the first incomplete task, 6.4 — Export UI.
 4. Verify format, clippy, tests, build, and `timeout 8 ./target/debug/epsilon`.
 5. Update this file, `ROADMAP.md`, `CHANGELOG.md`, then commit and push.
 

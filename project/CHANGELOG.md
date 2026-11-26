@@ -4,6 +4,13 @@ Notable changes, newest first. Version sections are added at release time.
 
 ## [Unreleased]
 
+### Added — 2026-11-26 (task 6.3)
+
+- SVG export for every element kind: cropped world-unit viewBox, rotation,
+  rough seeded strokes, dashed/dotted strokes, solid/hatch/cross-hatch fills,
+  arrowheads, opacity, multi-line text and stable paint order.
+- File → Export SVG… with atomic writes and status feedback.
+
 ### Added — 2026-11-26 (task 6.2)
 
 - PNG export pipeline: scene-bounds cropping, 1x/2x/4x/custom scale, optional

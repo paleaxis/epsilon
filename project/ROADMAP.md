@@ -764,12 +764,21 @@ text, byte-identical repeat renders, oversized rejection and an on-disk export.
 Text rotation is not applied in exports, and the export dialog options remain
 6.4.
 
-### [ ] 6.3 — SVG export
+### [x] 6.3 — SVG export
 
 Vector output for all element types; text as text or outlined paths (decided in
 6.1); stable element ordering.
 
 Acceptance: valid SVG; visual parity check against canvas; geometry tests.
+
+Completed 2026-11-26: `epsilon-app::svg` writes a cropped, world-unit SVG with
+route primitive per element kind (rect/ellipse/polygon/polyline), rotation,
+rough seeded strokes, dashed/dotted strokes, solid/hatch/cross-hatch fills,
+arrowheads, opacity, multi-line text and exact paint order. Text is emitted as
+`<text>` with a sans-serif fallback (D-054), not outlined paths. File → Export
+SVG writes atomically. Tests cover the cropped viewBox and width/height, empty
+scenes, every element kind, paint order, repeat determinism and an on-disk
+export. Visual comparison against the canvas was not performed here.
 
 ### [ ] 6.4 — Export UI
 

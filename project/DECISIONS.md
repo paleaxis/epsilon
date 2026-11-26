@@ -1141,3 +1141,28 @@ per-glyph advances and greedy word wrapping rather than egui shaping, and
 rotated text is rasterized unrotated; both are fidelity gaps to revisit before
 claiming pixel parity. File → Export PNG currently uses 1x and the document
 background; selection/scale/format choices belong to task 6.4.
+
+---
+
+## D-054 — SVG export emits text elements and world-unit vector primitives (2026-11-26)
+
+**Context.** Task 6.3 requires vector output for every element type, with text
+either as `<text>` or outlined paths, and stable ordering.
+
+**Decision.** Emit text as `<text>` with one `<tspan>` per explicit newline and a
+generic `sans-serif` fallback, using the element's fill color, font size,
+alignment and rotation. Outlining glyphs would require embedding/parsing font
+outlines and inflating files, and the UI later inherits a system font anyway.
+All geometry is written in world units and cropped by the same
+`core::export::export_bounds` used by PNG; the SVG `width`/`height` attributes
+multiply by the selected scale while `viewBox` stays in world units.
+Rough strokes reuse core `rough_polyline` with the same seed, dashes use SVG
+`stroke-dasharray` (8/6 dashed, 1/4 dotted), hatch fills are clipped `<line>`
+sets, and elements are emitted in `Document::paint_order`. No new dependency is
+added.
+
+**Consequences.** SVG output is deterministic, editable text stays selectable,
+and geometry matches PNG cropping. Text wrapping is limited to explicit
+newlines because SVG has no portable font metrics at export time; viewers apply
+their own fallback font, so visual text parity with the canvas is not claimed.
+Manual visual comparison against the canvas remains a pending acceptance item.

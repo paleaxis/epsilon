@@ -1817,6 +1817,56 @@ impl EpsilonApp {
         self.export_png_to_path(&with_extension_if_needed(path, "png"));
     }
 
+    fn export_svg_to_path(&mut self, path: &Path) -> bool {
+        let name = path
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_else(|| path.display().to_string());
+        let options = ExportOptions {
+            scale: ExportScale::One,
+            rough: !self.clean_rendering,
+            ..ExportOptions::default()
+        }
+        .with_document_background(&self.document);
+        match crate::svg::export_svg(&self.document, &options) {
+            Ok(svg) => match write_bytes_atomically(path, svg.as_bytes()) {
+                Ok(()) => {
+                    self.file_feedback = Some(FileFeedback::Saved(format!("Exported {name}")));
+                    true
+                }
+                Err(error) => {
+                    self.file_feedback =
+                        Some(FileFeedback::Error(format!("Export failed: {error}")));
+                    false
+                }
+            },
+            Err(error) => {
+                self.file_feedback = Some(FileFeedback::Error(format!("Export failed: {error}")));
+                false
+            }
+        }
+    }
+
+    fn export_svg_dialog(&mut self) {
+        if self.history_blocked() {
+            self.file_feedback = Some(FileFeedback::Error(
+                "Finish the current edit before exporting".to_owned(),
+            ));
+            return;
+        }
+        let mut dialog = rfd::FileDialog::new()
+            .add_filter("SVG image", &["svg"])
+            .set_title("Export SVG image")
+            .set_file_name("untitled.svg");
+        if let Some(parent) = self.file_path.as_ref().and_then(|path| path.parent()) {
+            dialog = dialog.set_directory(parent);
+        }
+        let Some(path) = dialog.save_file() else {
+            return;
+        };
+        self.export_svg_to_path(&with_extension_if_needed(path, "svg"));
+    }
+
     fn request_open_document(&mut self) {
         if self.history_blocked() {
             self.file_feedback = Some(FileFeedback::Error(
@@ -2416,6 +2466,10 @@ impl EpsilonApp {
                         }
                         if ui.button("Export PNG…").clicked() {
                             self.export_png_dialog();
+                            ui.close();
+                        }
+                        if ui.button("Export SVG…").clicked() {
+                            self.export_svg_dialog();
                             ui.close();
                         }
                         if !self.recent.is_empty() {
@@ -6267,6 +6321,27 @@ mod tests {
         assert_eq!(&bytes[..8], b"\x89PNG\r\n\x1a\n");
         let decoded = tiny_skia::Pixmap::decode_png(&bytes).expect("decode PNG export");
         assert!(decoded.width() > 0 && decoded.height() > 0);
+        assert!(matches!(
+            app.file_feedback,
+            Some(FileFeedback::Saved(ref message)) if message.contains("Exported")
+        ));
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn svg_export_writes_a_readable_vector_scene() {
+        let dir = file_test_dir("svg-export");
+        let path = dir.join("scene.svg");
+        let mut app = selection_app();
+        let expected = app.document.elements.len();
+
+        assert!(app.export_svg_to_path(&path));
+        let svg = std::fs::read_to_string(&path).expect("read SVG export");
+        assert!(svg.starts_with("<svg"));
+        assert!(svg.ends_with("</svg>\n"));
+        assert!(svg.matches("<polygon").count() + svg.matches("<rect").count() > 0);
+        assert!(expected > 0);
         assert!(matches!(
             app.file_feedback,
             Some(FileFeedback::Saved(ref message)) if message.contains("Exported")

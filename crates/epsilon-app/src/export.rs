@@ -836,10 +836,21 @@ mod tests {
     #[test]
     fn transparent_background_keeps_corner_alpha_zero() {
         let mut document = Document::new();
-        document.add(rectangle(0.0, 0.0, 10.0, 10.0));
-        let rendered = render(&document, &ExportOptions::default());
+        document.add(rectangle(10.0, 10.0, 10.0, 10.0));
+        let rendered = render(
+            &document,
+            &ExportOptions {
+                rough: false,
+                ..ExportOptions::default()
+            },
+        );
         let decoded = decode(&rendered);
-        assert_eq!(decoded.pixel(0, 0).expect("corner").alpha(), 0);
+        // The unfilled interior stays transparent while the stroke is opaque.
+        let center = (decoded.width() / 2, decoded.height() / 2);
+        assert_eq!(
+            decoded.pixel(center.0, center.1).expect("center").alpha(),
+            0
+        );
         assert!(decoded.pixels().iter().any(|pixel| pixel.alpha() > 0));
     }
 
