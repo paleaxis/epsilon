@@ -4,6 +4,17 @@ Notable changes, newest first. Version sections are added at release time.
 
 ## [Unreleased]
 
+### Added — 2026-11-26 (task 6.2)
+
+- PNG export pipeline: scene-bounds cropping, 1x/2x/4x/custom scale, optional
+  background or transparency, and deterministic CPU rasterization of every
+  element kind (rough strokes, dash/dot strokes, hatch fills, arrowheads and
+  wrapped text including glyph alpha).
+- 16 384-pixel side and 64-megapixel export limits with a clear error, and
+  atomic PNG writes through the shared temp-file helper.
+- File → Export PNG… with status feedback; dialog options for selection/scale
+  remain task 6.4.
+
 ### Added — 2026-11-26 (task 6.1)
 
 - Raster export backend decision: CPU `tiny-skia` paths plus `fontdue` glyph

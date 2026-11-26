@@ -17,12 +17,11 @@ eframe.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 rfd.workspace = true
-epsilon-core = { path = "../epsilon-core" }
-
-[dev-dependencies]
-# Raster export spike (task 6.1): CPU paths plus glyph coverage, no GPU surface.
+# PNG export (task 6.2): deterministic CPU paths and glyph coverage, no GPU
+# surface. Chosen in task 6.1 (DECISIONS.md D-052).
 tiny-skia = "0.12"
 fontdue = "0.9"
+epsilon-core = { path = "../epsilon-core" }
 
 [lints.rust]
 unsafe_code = "forbid"

@@ -1,6 +1,7 @@
 //! Epsilon — a native Rust whiteboard desktop application.
 
 mod app;
+mod export;
 mod layout;
 mod theme;
 mod tools;

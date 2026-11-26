@@ -15,11 +15,12 @@
 //! - [`recovery`] — rotating crash-recovery autosaves (Stage 5).
 //! - [`recent`] — bounded recent-document paths (Stage 5).
 //! - [`excalidraw`] — Excalidraw import/export with preserved extras (Stage 5).
-//! - `export` — PNG/SVG export (Stage 6).
+//! - [`export`] — crop bounds, scales and limits for PNG/SVG export (Stage 6).
 
 pub mod clipboard;
 pub mod document;
 pub mod excalidraw;
+pub mod export;
 pub mod format;
 pub mod geometry;
 pub mod grid;

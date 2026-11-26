@@ -745,13 +745,24 @@ text from document geometry, writes a PNG, decodes it and checks dimensions and
 non-background pixels. Production scene bounds, text layout/shaping, rough
 strokes and UI wiring remain 6.2.
 
-### [ ] 6.2 — PNG export pipeline
+### [x] 6.2 — PNG export pipeline
 
 World-bounds cropping, scale factor (1x/2x/4x/custom), background/transparent
 option, deterministic output.
 
 Acceptance: PNG dimensions and content bounds tested; export ignores UI panels;
 large scenes bounded.
+
+Completed 2026-11-26: `epsilon-core::export` owns the crop bounds, scale
+presets (1x/2x/4x/custom up to 32x), background/transparent option, 16 384-pixel
+side and 64-megapixel limits. `epsilon-app::export` rasterizes every element
+kind deterministically with tiny-skia/fontdue, including rough strokes, dashed
+and dotted strokes, hatch fills, arrowheads and wrapped multi-line text. File →
+Export PNG writes atomically through the shared temp-file helper. Tests cover
+preset/custom dimensions, content pixels at the crop edges, transparency,
+text, byte-identical repeat renders, oversized rejection and an on-disk export.
+Text rotation is not applied in exports, and the export dialog options remain
+6.4.
 
 ### [ ] 6.3 — SVG export
 

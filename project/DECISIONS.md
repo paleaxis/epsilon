@@ -1104,3 +1104,40 @@ and runs in tests. The app gains two small dependencies (fontdue overlaps
 egui's existing text stack, which is accepted for a stable public glyph API).
 Text shaping/line breaking and pixel-parity with the canvas are explicit risks
 for 6.2/6.3.
+
+---
+
+## D-053 — PNG export crops world bounds with a one-pixel margin and rasterizes in the app layer (2026-11-26)
+
+**Context.** Task 6.2 needs a scene pipeline on top of the D-052 backend:
+measurable output dimensions, a choice between canvas background and
+transparency, and a place for the rasterizer that respects the core/app
+boundary.
+
+**Decision.**
+- `epsilon-core::export` owns pure export geometry: `content_bounds`, a padded
+  `export_bounds`, `ExportScale` (1x/2x/4x/custom up to 32x),
+  `ExportOptions { scale, background, rough }`, integer `ExportSize`, and the
+  `EmptyScene`/`InvalidScale`/`TooLarge` errors. Limits are a 16 384-pixel side
+  and 64 megapixels, validated before allocation.
+- The crop expands each element's rotated world bounds by half its stroke width,
+  one output pixel of hand-drawn jitter margin (`1 / scale` world units) and the
+  arrowhead half-width for arrows. This is the only padding: the image is not
+  tied to the live viewport, panels or window.
+- Rasterization lives in `epsilon-app::export` because it needs the UI's
+  embedded Ubuntu font; `epsilon-core` still has no tiny-skia, fontdue, egui or
+  windowing dependency. `tiny-skia` and `fontdue` move from dev-dependencies to
+  runtime dependencies of the app.
+- The document itself decides the visible style: exports follow
+  `clean_rendering` (through `ExportOptions::rough`) and use the document canvas
+  background when the app requests `with_document_background`.
+- PNG bytes are encoded by tiny-skia and written through a new
+  `format::write_bytes_atomically`, which reuses the synced temp-file plus
+  rename path already used for JSON.
+
+**Consequences.** Exported dimensions are a pure function of the document and
+scale, tested at 1x/2x/4x/custom and at the limits. Text is laid out with
+per-glyph advances and greedy word wrapping rather than egui shaping, and
+rotated text is rasterized unrotated; both are fidelity gaps to revisit before
+claiming pixel parity. File → Export PNG currently uses 1x and the document
+background; selection/scale/format choices belong to task 6.4.

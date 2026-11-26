@@ -185,10 +185,16 @@ impl fmt::Display for FileError {
 /// Writes JSON atomically via a synced sibling temp file and rename, shared by
 /// the native and Excalidraw exporters.
 pub fn write_json_atomically(path: &Path, json: &str) -> Result<(), FileError> {
+    write_bytes_atomically(path, json.as_bytes())
+}
+
+/// Writes binary data atomically via a synced sibling temp file and rename,
+/// shared by the PNG exporter.
+pub fn write_bytes_atomically(path: &Path, bytes: &[u8]) -> Result<(), FileError> {
     let temp = temporary_path(path);
     let result = (|| -> std::io::Result<()> {
         let mut file = File::create(&temp)?;
-        file.write_all(json.as_bytes())?;
+        file.write_all(bytes)?;
         file.sync_all()?;
         drop(file);
         std::fs::rename(&temp, path)

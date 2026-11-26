@@ -10,7 +10,8 @@ use epsilon_core::document::{
     Element, ElementId, ElementKind, FillStyle, StrokeStyle, TextAlign, ZOrderMove,
 };
 use epsilon_core::excalidraw;
-use epsilon_core::format::{EpsilonFile, FILE_EXTENSION};
+use epsilon_core::export::{ExportOptions, ExportScale};
+use epsilon_core::format::{EpsilonFile, FILE_EXTENSION, write_bytes_atomically};
 use epsilon_core::geometry::{
     Point, Rect, ResizeHandle, arrowhead_points, constrain_angle, resize_rect, rotate_point,
     rough_polyline, simplify_polyline, smooth_polyline, snap_angle,
@@ -55,9 +56,10 @@ const MIN_SHAPE_PIXELS: f64 = 3.0;
 /// Shift-constrained linear tools snap to 15-degree increments.
 const LINE_ANGLE_STEP: f64 = std::f64::consts::PI / 12.0;
 
-/// Arrowhead size in screen pixels, independent of zoom.
-const ARROW_HEAD_LENGTH_PIXELS: f64 = 12.0;
-const ARROW_HEAD_HALF_WIDTH_PIXELS: f64 = 6.0;
+/// Arrowhead size in screen pixels, independent of zoom. The PNG exporter
+/// reuses these world-space defaults so exports match the canvas.
+pub(crate) const ARROW_HEAD_LENGTH_PIXELS: f64 = 12.0;
+pub(crate) const ARROW_HEAD_HALF_WIDTH_PIXELS: f64 = 6.0;
 
 /// Freehand input is sampled at least this many screen pixels apart.
 const MIN_FREEHAND_SAMPLE_PIXELS: f64 = 1.5;
@@ -80,7 +82,7 @@ const ROTATION_HANDLE_OFFSET_PIXELS: f32 = 24.0;
 const ROTATION_HANDLE_RADIUS_PIXELS: f32 = 5.0;
 
 /// Screen-space jitter amplitude for hand-drawn strokes.
-const ROUGH_AMPLITUDE_PIXELS: f64 = 0.8;
+pub(crate) const ROUGH_AMPLITUDE_PIXELS: f64 = 0.8;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct SelectionProperties {
@@ -1762,6 +1764,59 @@ impl EpsilonApp {
         self.export_excalidraw_to_path(&with_extension_if_needed(path, "excalidraw"));
     }
 
+    fn export_png_to_path(&mut self, path: &Path) -> bool {
+        let name = path
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_else(|| path.display().to_string());
+        let options = ExportOptions {
+            scale: ExportScale::One,
+            rough: !self.clean_rendering,
+            ..ExportOptions::default()
+        }
+        .with_document_background(&self.document);
+        let rendered = match crate::export::render_png(&self.document, &options) {
+            Ok(rendered) => rendered,
+            Err(error) => {
+                self.file_feedback = Some(FileFeedback::Error(format!("Export failed: {error}")));
+                return false;
+            }
+        };
+        match write_bytes_atomically(path, &rendered.bytes) {
+            Ok(()) => {
+                self.file_feedback = Some(FileFeedback::Saved(format!(
+                    "Exported {name} ({}×{})",
+                    rendered.size.width, rendered.size.height
+                )));
+                true
+            }
+            Err(error) => {
+                self.file_feedback = Some(FileFeedback::Error(format!("Export failed: {error}")));
+                false
+            }
+        }
+    }
+
+    fn export_png_dialog(&mut self) {
+        if self.history_blocked() {
+            self.file_feedback = Some(FileFeedback::Error(
+                "Finish the current edit before exporting".to_owned(),
+            ));
+            return;
+        }
+        let mut dialog = rfd::FileDialog::new()
+            .add_filter("PNG image", &["png"])
+            .set_title("Export PNG image")
+            .set_file_name("untitled.png");
+        if let Some(parent) = self.file_path.as_ref().and_then(|path| path.parent()) {
+            dialog = dialog.set_directory(parent);
+        }
+        let Some(path) = dialog.save_file() else {
+            return;
+        };
+        self.export_png_to_path(&with_extension_if_needed(path, "png"));
+    }
+
     fn request_open_document(&mut self) {
         if self.history_blocked() {
             self.file_feedback = Some(FileFeedback::Error(
@@ -2357,6 +2412,10 @@ impl EpsilonApp {
                         }
                         if ui.button("Export Excalidraw…").clicked() {
                             self.export_excalidraw_dialog();
+                            ui.close();
+                        }
+                        if ui.button("Export PNG…").clicked() {
+                            self.export_png_dialog();
                             ui.close();
                         }
                         if !self.recent.is_empty() {
@@ -6189,6 +6248,25 @@ mod tests {
             value["elements"].as_array().expect("elements").len(),
             expected
         );
+        assert!(matches!(
+            app.file_feedback,
+            Some(FileFeedback::Saved(ref message)) if message.contains("Exported")
+        ));
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn png_export_writes_a_decodable_image() {
+        let dir = file_test_dir("png-export");
+        let path = dir.join("scene.png");
+        let mut app = selection_app();
+
+        assert!(app.export_png_to_path(&path));
+        let bytes = std::fs::read(&path).expect("read PNG export");
+        assert_eq!(&bytes[..8], b"\x89PNG\r\n\x1a\n");
+        let decoded = tiny_skia::Pixmap::decode_png(&bytes).expect("decode PNG export");
+        assert!(decoded.width() > 0 && decoded.height() > 0);
         assert!(matches!(
             app.file_feedback,
             Some(FileFeedback::Saved(ref message)) if message.contains("Exported")

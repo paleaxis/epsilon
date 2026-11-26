@@ -2,8 +2,8 @@
 
 Last updated: 2026-11-26
 Current stage: **Stage 6 — Export**
-Last completed task: **6.1 — Raster export backend decision and spike**
-Next task: **6.2 — PNG export pipeline**
+Last completed task: **6.2 — PNG export pipeline**
+Next task: **6.3 — SVG export**
 
 ## Status
 
@@ -48,9 +48,11 @@ from File → Export Excalidraw; unsupported element types are skipped with a
 status warning, and unknown element/envelope fields are preserved for re-export.
 A fixture-based compatibility suite covers supported scenes, unknown fields and
 types, future Excalidraw versions, malformed JSON and native future-version
-rejection. The raster export backend is decided: a CPU `tiny-skia` path
-rasterizer with `fontdue` glyph coverage, validated by a PNG spike rendering a
-rectangle and text. No PNG export UI or scene pipeline exists yet.
+rejection. PNG export is implemented: core computes crop bounds, 1x/2x/4x/custom
+scales, background/transparent choice and size limits, and the app rasterizes
+every element kind deterministically with `tiny-skia` paths and `fontdue`
+glyphs. File → Export PNG… writes the cropped image atomically. Export-dialog
+options and SVG output remain tasks 6.3–6.4.
 
 Repository layout:
 
@@ -66,9 +68,9 @@ crates/epsilon-core/        UI-independent engine (no egui dependency)
   src/recovery.rs           rotating autosaves, naming/retention/fallback + 5 tests
   src/recent.rs             bounded recent paths, dedup/prune/serde + 3 tests
   src/excalidraw.rs         Excalidraw import/export, extras preservation + 6 tests
+  src/export.rs             export crop bounds, scales, limits + 8 tests
   tests/excalidraw_compat.rs fixture compatibility suite + 5 tests
   tests/fixtures/           scene, future-version and malformed Excalidraw files
-  tests/png_export_spike.rs CPU rectangle + text PNG spike + 1 test
   src/history.rs            reversible commands, transactions, bounded undo/redo + 9 tests
   src/clipboard.rs          clipboard JSON payload, paste preparation, group-ID refresh + 7 tests
 crates/epsilon-app/         eframe desktop shell
@@ -76,6 +78,7 @@ crates/epsilon-app/         eframe desktop shell
   src/layout.rs             shell size budgets + compile-time assertions
   src/theme.rs              semantic palettes, Visuals setup, serializable Theme
   src/tools.rs              Tool enum, shortcuts, painted icons, tool buttons
+  src/export.rs             deterministic PNG rasterizer + 6 tests
   src/app.rs                EpsilonApp, menus, toolbar, tool state, history wiring, settings
 ```
 
@@ -83,7 +86,7 @@ Working UI actions:
 
 | Where | Action |
 | --- | --- |
-| File menu | Quit (sends `ViewportCommand::Close`) |
+| File menu | New/Open/Save/Save As, Excalidraw import/export, Export PNG, Open Recent, Quit (sends `ViewportCommand::Close`) |
 | Edit menu | Undo/Redo (history-aware), Cut/Copy/Paste, Select All, Duplicate, Delete and Order (front/forward/backward/back) |
 | View menu | Dark mode, grid and clean-rendering toggles, applied immediately |
 | Help menu | About Epsilon (dialog) |
@@ -152,28 +155,26 @@ Other shell behavior:
   `Context::egui_wants_keyboard_input()`; `cc.storage` is a field.
 - Remote: `origin git@github.com/paleaxis/epsilon.git`, branch `main`.
 
-## Verified commands and results (task 6.1)
+## Verified commands and results (task 6.2)
 
 | Command | Result |
 | --- | --- |
 | `cargo fmt --all -- --check` | exit 0 |
 | `cargo clippy --workspace --all-targets -- -D warnings` | exit 0 |
-| `cargo test --workspace` | **214 passed, 0 failed** (104 app, 104 core, 5 compat, 1 PNG spike) |
+| `cargo test --workspace` | **228 passed, 0 failed** (111 app, 112 core, 5 compat) |
 | `cargo build --workspace` | success, no warnings |
 | `timeout 8 ./target/debug/epsilon` | exit 124 (alive, no stderr) |
 
-Task 6.1 adds `crates/epsilon-app/tests/png_export_spike.rs`, which builds a
-document with a styled rectangle and text, rasterizes it with `tiny-skia`
-paths and `fontdue` glyph coverage using egui's embedded Ubuntu font, writes a
-real PNG, decodes it and checks dimensions, signature, file size and non-
-background pixels. Full scene bounds, multi-line text layout, rough strokes and
-production wiring remain task 6.2. The suite retains all Stage 5 and earlier
-coverage.
-
-Native launch was verified by process liveness. The spike artifact was written
-to a temporary PNG and validated by decoding it; it was not visually inspected.
-Native dialogs were not clicked, and an export was not opened in the real
-Excalidraw application (manual acceptance item remains). Images/`files`,
+Task 6.2 adds `epsilon-core::export` (crop bounds, scale presets/custom, size
+limits, 8 tests) and `epsilon-app::export` (deterministic tiny-skia/fontdue
+rasterizer plus a File → Export PNG path, 7 tests including an on-disk decode).
+The 6.1 spike test was superseded by the production pipeline and removed. Tests
+cover expected dimensions at 1x/2x/4x/custom, content pixels reaching the crop
+edges, transparent corners, glyph pixels, byte-identical repeat renders,
+oversized rejection and the atomic file write. Native launch was verified by
+process liveness; the exported PNG was decoded but not visually inspected.
+Native dialogs were not clicked, and an Excalidraw export was not opened in the
+real Excalidraw application (manual acceptance item remains). Images/`files`,
 frames, bindings and arrowhead variants are not fully mapped.
 
 ## Features implemented
@@ -250,8 +251,12 @@ frames, bindings and arrowhead variants are not fully mapped.
   entries using native dialogs.
 - Fixture-based Excalidraw/native compatibility suite covering supported
   scenes, unknown fields/types, future versions and malformed inputs.
-- Raster export backend decision: CPU `tiny-skia` paths plus `fontdue` glyphs,
-  with a tested rectangle + text PNG spike (no export UI yet).
+- PNG export pipeline: core crop bounds/scales/limits and a deterministic
+  `tiny-skia`/`fontdue` rasterizer wired to File → Export PNG.
+- PNG export with scene-bounds cropping, 1x/2x/4x/custom scale, optional
+transparent background, deterministic element rasterization (rough strokes,
+dash/dot strokes, hatch fills, arrowheads, wrapped text), export size limits and
+atomic writes from File → Export PNG.
 - Persisted theme/tool; eframe-persisted window geometry and panel widths.
 - Tool palette with shortcuts, painted icons and accessible names.
 - Dark/light themes with central palette and contrast tests.
@@ -302,16 +307,40 @@ preserved custom data and re-import. The real-application check cannot run here
 
 Status: **pending** — not performed in this environment.
 
+## Manual acceptance checklist — PNG export (task 6.2)
+
+Automated tests cover dimensions, cropping, transparency, text pixels, repeat
+render determinism, size limits and the atomic write. The file dialog and visual
+result were not inspected:
+
+- [ ] Launch `./target/debug/epsilon` and draw shapes with fill, rough strokes,
+  dashed/dotted strokes, hatch fill, an arrow and wrapped multi-line text.
+- [ ] File → Export PNG…, save `/tmp/epsilon-export-check.png`.
+- [ ] Open the PNG and confirm the image is cropped to the drawing (no canvas
+  padding or UI panels), strokes are not clipped, and text matches the canvas.
+- [ ] Toggle View → Clean rendering and export again; rough jitter should be
+  absent in the second image.
+- [ ] Export an empty document and confirm the status bar reports that there is
+  nothing to export instead of writing a file.
+
+Status: **pending** — not performed in this environment. Rotated text and full
+egui text shaping are known fidelity gaps (D-053).
+
 ## Known issues / limitations
 
 - Edit contains Undo/Redo, Cut/Copy/Paste, Select All, Duplicate, Delete, Group,
   Ungroup, Order and the Arrange alignment/distribution submenu. File has
   New/Open/Open Recent/Save/Save As, Excalidraw Import/Export and Quit with the
   unsaved-changes guard. Excalidraw images/frames/bindings are not mapped yet.
-- Stage 5 is complete; Stage 6 has only the backend decision/spike so far.
-  PNG/SVG/clipboard export and the export UI remain. Manual acceptance remains
-  for opening an Excalidraw export in the real app and clicking native
-  dialogs/menus.
+- Stage 5 is complete; Stage 6 now has the PNG pipeline. SVG, clipboard image
+  export and the export dialog (selection vs canvas, scale, filename) remain.
+  Manual acceptance remains for opening an Excalidraw export in the real app,
+  visually checking a PNG export and clicking native dialogs/menus.
+- PNG text uses `fontdue` per-glyph advances and greedy word wrapping, not
+  egui's shaping/kerning; rotated text is exported unrotated. Rough strokes are
+  deterministic but not pixel-identical to the canvas anti-aliasing.
+- File → Export PNG always exports the whole document at 1x with the document
+  background; scale and selection options arrive with task 6.4.
 - Arrange commands have no keyboard shortcuts; they are available only from the
   Edit menu, and the menu itself was not clicked in a live window.
 - Z-order moves rewrite paint slots densely (0..n), so elements whose slot
@@ -334,7 +363,7 @@ Status: **pending** — not performed in this environment.
 
 1. Read `AGENTS.md`, `project/ROADMAP.md`, this file, `project/DECISIONS.md`.
 2. `git status` must be clean; run `cargo test --workspace` for the baseline.
-3. Start with the first incomplete task, 6.2 — PNG export pipeline.
+3. Start with the first incomplete task, 6.3 — SVG export.
 4. Verify format, clippy, tests, build, and `timeout 8 ./target/debug/epsilon`.
 5. Update this file, `ROADMAP.md`, `CHANGELOG.md`, then commit and push.
 
