@@ -4,6 +4,13 @@ Notable changes, newest first. Version sections are added at release time.
 
 ## [Unreleased]
 
+### Added — 2026-11-26 (task 5.4)
+
+- 30-second autosave of dirty documents into a rotating app-data recovery
+  directory, retaining the newest five files.
+- Startup Recover/Discard offer for the newest valid autosave, restoring the
+  scene, viewport and source path; normal save/open/new/discard clears recovery.
+
 ### Added — 2026-11-26 (task 5.3)
 
 - New document (Ctrl+N), Save As (Ctrl+Shift+S) and a Save/Discard/Cancel guard

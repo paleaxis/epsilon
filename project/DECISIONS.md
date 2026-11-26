@@ -962,3 +962,29 @@ defines dirty state, so undoing back to that state needs no prompt.
 **Consequences.** All destructive paths share one tested decision point, and a
 failed save cannot silently discard work. The live modal and compositor close
 flow remain manual checks; headless tests exercise the resolution methods.
+
+---
+
+## D-048 — Autosaves rotate in the app-data recovery directory and are offered only on launch (2026-11-26)
+
+**Context.** Task 5.4 needs periodic autosaves that survive a crash, a launch
+offer that can be declined, and a bounded directory. Overwriting one file would
+make retention and corrupt-file fallback impossible to test.
+
+**Decision.** Core `recovery::RecoveryStore` writes ordinary `EpsilonFile` JSON
+to `<app data>/recovery/autosave-<13-digit-ms>-<4-digit-sequence>.epsilon`
+using the same atomic write as normal saves. Only the newest five names are
+kept. `load_latest` walks newest to oldest and skips corrupt files. The source
+document path, when present, is stored in the envelope's app-state extras under
+`recovery_source_path`; it is not part of normal saves. The app autosaves dirty,
+idle documents every 30 seconds, never while the recovery offer is unresolved,
+and shows one Recover/Discard window at startup (`EpsilonApp::new`). Recover
+restores document/viewport/path, clears session history and selection, and marks
+the document dirty so saving prompts. Successful normal save/open/new, explicit
+discard and approved quit remove the recovery files.
+
+**Consequences.** A crash can lose at most 30 seconds of work, older valid
+autosaves survive a corrupt newest file, and cleanup is bounded and tested
+headlessly. Autosaves include document data, so the app-data directory should be
+treated as document storage (no telemetry/cloud). The live timer and launch modal
+remain manual checks.

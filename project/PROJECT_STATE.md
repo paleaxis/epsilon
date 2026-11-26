@@ -2,8 +2,8 @@
 
 Last updated: 2026-11-26
 Current stage: **Stage 5 — Documents and persistence**
-Last completed task: **5.3 — New, Save As, close guard**
-Next task: **5.4 — Autosave and crash recovery**
+Last completed task: **5.4 — Autosave and crash recovery**
+Next task: **5.5 — Recent documents**
 
 ## Status
 
@@ -38,7 +38,9 @@ dialogs and atomic temp-file-plus-rename writes; the title and status bar show
 the file name and dirty state, and failed operations are reported without
 altering the current document. New (Ctrl+N), Save As (Ctrl+Shift+S), and a
 Save/Discard/Cancel guard before New, Open or window close protect unsaved
-work.
+work. Dirty documents are autosaved every 30 seconds into a rotating recovery
+directory under the app data folder; launch offers the newest valid autosave
+for recovery, and normal save/open/new/discard removes recovery files.
 
 Repository layout:
 
@@ -51,6 +53,7 @@ crates/epsilon-core/        UI-independent engine (no egui dependency)
   src/geometry.rs           Point, Rect, shapes, rough strokes + 29 tests
   src/document.rs           schema-versioned document, shapes, text, styles, paint order, groups, arrange operations
   src/format.rs             native .epsilon v1 envelope, atomic file I/O, extras + 6 tests
+  src/recovery.rs           rotating autosaves, naming/retention/fallback + 5 tests
   src/history.rs            reversible commands, transactions, bounded undo/redo + 9 tests
   src/clipboard.rs          clipboard JSON payload, paste preparation, group-ID refresh + 7 tests
 crates/epsilon-app/         eframe desktop shell
@@ -134,26 +137,27 @@ Other shell behavior:
   `Context::egui_wants_keyboard_input()`; `cc.storage` is a field.
 - Remote: `origin git@github.com/paleaxis/epsilon.git`, branch `main`.
 
-## Verified commands and results (task 5.3)
+## Verified commands and results (task 5.4)
 
 | Command | Result |
 | --- | --- |
 | `cargo fmt --all -- --check` | exit 0 |
 | `cargo clippy --workspace --all-targets -- -D warnings` | exit 0 |
-| `cargo test --workspace` | **185 passed, 0 failed** (95 app, 90 core) |
+| `cargo test --workspace` | **193 passed, 0 failed** (98 app, 95 core) |
 | `cargo build --workspace` | success, no warnings |
 | `timeout 8 ./target/debug/epsilon` | exit 124 (alive, no stderr) |
 
-Task 5.3 adds app tests for New resetting scene/path/history and clean state,
-the unsaved guard cancelling and discarding New without touching the document,
-Save resolving the guard by writing the latest scene before continuing, and
-registration of Ctrl+N/Ctrl+O/Ctrl+S/Ctrl+Shift+S. The suite also retains task
-5.2 disk and error tests, task 5.1 format tests and all Stage 4 and earlier
-coverage.
+Task 5.4 adds core tests for sortable autosave naming, retention pruning,
+non-recovery file filtering, corrupt-newest fallback, source-path metadata and
+store discard. App tests simulate a crash by autosaving and starting a fresh app
+that offers and recovers the scene, verify recovered history/selection reset and
+dirty state, and confirm clean documents are not autosaved and recovery can be
+discarded. The suite also retains all earlier Stage 5 and Stage 4 coverage.
 
-Native launch was verified by process liveness. Guard choices were exercised
-through app methods; the modal window, native dialogs and compositor close
-request flow were not manually inspected in a live session.
+Native launch was verified by process liveness. Autosave/recovery was exercised
+through app and core methods with temporary stores; the launch modal and a real
+process kill were not manually tested, and the 30-second timer was not observed
+in a live session.
 
 ## Features implemented
 
@@ -216,6 +220,9 @@ request flow were not manually inspected in a live session.
 - Save/Discard/Cancel guard before New, Open and window close; saving resolves
   the guard only after the write succeeds, and a cancelled Save As leaves the
   prompt and document intact.
+- 30-second autosave of dirty documents to a rotating recovery directory (five
+  retained), startup Recover/Discard offer using the newest valid file, source
+  path restoration, and cleanup on normal save/open/new/discard/quit.
 - Persisted theme/tool; eframe-persisted window geometry and panel widths.
 - Tool palette with shortcuts, painted icons and accessible names.
 - Dark/light themes with central palette and contrast tests.
@@ -248,8 +255,8 @@ automation allowed). Items requiring a human reviewer:
 
 - Edit contains Undo/Redo, Cut/Copy/Paste, Select All, Duplicate, Delete, Group,
   Ungroup, Order and the Arrange alignment/distribution submenu. File has
-  New/Open/Save/Save As and Quit with the unsaved-changes guard; autosave and
-  crash recovery arrive in task 5.4.
+  New/Open/Save/Save As and Quit with the unsaved-changes guard; recent
+  documents arrive in task 5.5.
 - Arrange commands have no keyboard shortcuts; they are available only from the
   Edit menu, and the menu itself was not clicked in a live window.
 - Z-order moves rewrite paint slots densely (0..n), so elements whose slot
@@ -272,7 +279,7 @@ automation allowed). Items requiring a human reviewer:
 
 1. Read `AGENTS.md`, `project/ROADMAP.md`, this file, `project/DECISIONS.md`.
 2. `git status` must be clean; run `cargo test --workspace` for the baseline.
-3. Start with the first incomplete task, 5.4 — Autosave and crash recovery.
+3. Start with the first incomplete task, 5.5 — Recent documents.
 4. Verify format, clippy, tests, build, and `timeout 8 ./target/debug/epsilon`.
 5. Update this file, `ROADMAP.md`, `CHANGELOG.md`, then commit and push.
 

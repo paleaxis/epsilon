@@ -605,6 +605,7 @@ dependencies = [
  "epsilon-core",
  "rfd",
  "serde",
+ "serde_json",
 ]
 
 [[package]]

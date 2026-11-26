@@ -1,5 +1,6 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 use eframe::egui::{self, Align, Layout, RichText};
 
@@ -15,6 +16,7 @@ use epsilon_core::geometry::{
 };
 use epsilon_core::grid;
 use epsilon_core::history::{History, Transaction};
+use epsilon_core::recovery::{RECOVERY_SOURCE_KEY, RecoveryStore};
 use epsilon_core::viewport::Viewport;
 
 use crate::layout;
@@ -39,6 +41,9 @@ struct PersistedSettings {
     #[serde(default)]
     clean_rendering: bool,
 }
+
+/// How often an unsaved dirty document is written to the recovery directory.
+const AUTOSAVE_INTERVAL: Duration = Duration::from_secs(30);
 
 /// Minimum on-screen width/height (or line length) for a drag to be committed.
 const MIN_SHAPE_PIXELS: f64 = 3.0;
@@ -535,6 +540,7 @@ enum FileFeedback {
     New(String),
     Saved(String),
     Opened(String),
+    Recovered(String),
     Error(String),
 }
 
@@ -555,7 +561,10 @@ enum UnsavedChoice {
 impl FileFeedback {
     fn message(&self) -> &str {
         match self {
-            Self::New(message) | Self::Saved(message) | Self::Opened(message) => message,
+            Self::New(message)
+            | Self::Saved(message)
+            | Self::Opened(message)
+            | Self::Recovered(message) => message,
             Self::Error(message) => message,
         }
     }
@@ -671,6 +680,12 @@ pub struct EpsilonApp {
     document: Document,
     /// Path of the file this document was last saved to or opened from.
     file_path: Option<PathBuf>,
+    /// Rotating autosave store under the application data directory.
+    recovery_store: Option<RecoveryStore>,
+    /// A recovered autosave awaiting the user's Recover/Discard choice.
+    recovery_offer: Option<EpsilonFile>,
+    /// Time of the last autosave attempt (successful or not).
+    last_autosave: Instant,
     /// A guard action waiting for the unsaved-changes prompt to resolve.
     pending_action: Option<PendingAction>,
     /// True once the user has chosen to close, so the close guard stops
@@ -738,6 +753,10 @@ impl Default for EpsilonApp {
             viewport: Viewport::default(),
             document: Document::default(),
             file_path: None,
+            recovery_store: eframe::storage_dir("Epsilon")
+                .map(|dir| RecoveryStore::new(dir.join("recovery"))),
+            recovery_offer: None,
+            last_autosave: Instant::now(),
             pending_action: None,
             allow_close: false,
             saved_document: Document::default(),
@@ -1102,8 +1121,9 @@ const KEYBINDINGS: &[KeyBinding] = &[
 
 impl EpsilonApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
-        let app = Self::from_storage(cc.storage);
+        let mut app = Self::from_storage(cc.storage);
         theme::apply(&cc.egui_ctx, app.theme);
+        app.offer_recovery();
         app
     }
 
@@ -1393,6 +1413,130 @@ impl EpsilonApp {
         }
     }
 
+    /// Loads the newest valid autosave into the startup offer, if any. The
+    /// file is not deleted until the user recovers or discards it.
+    fn offer_recovery(&mut self) -> bool {
+        let Some(store) = &self.recovery_store else {
+            return false;
+        };
+        match store.load_latest() {
+            Ok(Some((_, file))) => {
+                self.recovery_offer = Some(file);
+                true
+            }
+            Ok(None) => false,
+            Err(error) => {
+                self.file_feedback = Some(FileFeedback::Error(format!(
+                    "Recovery unavailable: {error}"
+                )));
+                false
+            }
+        }
+    }
+
+    fn autosave_now(&mut self) -> bool {
+        if !self.is_dirty() || self.history_blocked() || self.recovery_offer.is_some() {
+            return false;
+        }
+        let Some(store) = &self.recovery_store else {
+            return false;
+        };
+        let mut file = EpsilonFile::new(self.document.clone());
+        file.app_state.viewport = self.viewport;
+        if let Some(path) = &self.file_path {
+            file.app_state.extras.insert(
+                RECOVERY_SOURCE_KEY.to_owned(),
+                serde_json::json!(path.to_string_lossy()),
+            );
+        }
+        match store.save(&file) {
+            Ok(_) => {
+                self.last_autosave = Instant::now();
+                true
+            }
+            Err(error) => {
+                self.last_autosave = Instant::now();
+                self.file_feedback = Some(FileFeedback::Error(format!("Autosave failed: {error}")));
+                false
+            }
+        }
+    }
+
+    fn discard_recovery_files(&mut self) {
+        if let Some(store) = &self.recovery_store
+            && let Err(error) = store.discard_all()
+        {
+            self.file_feedback = Some(FileFeedback::Error(format!(
+                "Could not remove recovery files: {error}"
+            )));
+        }
+    }
+
+    /// Applies a recovery document as unsaved work, restoring the source path
+    /// when the autosave recorded one. History is reset because it cannot be
+    /// reconstructed from the file.
+    fn apply_recovery(&mut self) {
+        let Some(file) = self.recovery_offer.take() else {
+            return;
+        };
+        let source = file
+            .app_state
+            .extras
+            .get(RECOVERY_SOURCE_KEY)
+            .and_then(|value| value.as_str())
+            .map(PathBuf::from);
+        self.document = file.document;
+        self.viewport = file.app_state.viewport;
+        self.viewport.set_zoom(self.viewport.zoom);
+        self.history.clear();
+        self.history_error = None;
+        self.property_edit_before = None;
+        self.pointer_mode = PointerMode::Idle;
+        self.transform_original.clear();
+        self.selected.clear();
+        self.editing_text = None;
+        self.editing_text_is_new = false;
+        self.text_buffer.clear();
+        self.text_editor_needs_focus = false;
+        self.paste_count = 0;
+        self.file_path = source;
+        // The recovered scene was not necessarily the last saved state, so it
+        // starts dirty and prompts before overwriting any source file.
+        self.saved_document = Document::new();
+        self.file_feedback = Some(FileFeedback::Recovered("Recovered unsaved work".to_owned()));
+        self.discard_recovery_files();
+    }
+
+    fn recovery_window(&mut self, ctx: &egui::Context) {
+        if self.recovery_offer.is_none() {
+            return;
+        }
+        let mut recover = false;
+        let mut discard = false;
+        egui::Window::new("Recover unsaved work?")
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+            .show(ctx, |ui| {
+                ui.label("Epsilon found an autosave from a previous session.");
+                ui.horizontal(|ui| {
+                    if ui.button("Recover").clicked() {
+                        recover = true;
+                    }
+                    if ui.button("Discard").clicked() {
+                        discard = true;
+                    }
+                });
+            });
+        if recover {
+            self.apply_recovery();
+        } else if discard {
+            self.recovery_offer = None;
+            self.discard_recovery_files();
+            self.file_feedback = Some(FileFeedback::New("Discarded recovered work".to_owned()));
+        }
+    }
+
     /// Serializes the document and viewport to `path`. The destination is only
     /// replaced after the full JSON has been written and synced.
     fn save_to_path(&mut self, path: &Path) -> bool {
@@ -1406,6 +1550,8 @@ impl EpsilonApp {
             Ok(()) => {
                 self.file_path = Some(path.to_path_buf());
                 self.saved_document = self.document.clone();
+                self.last_autosave = Instant::now();
+                self.discard_recovery_files();
                 self.file_feedback = Some(FileFeedback::Saved(format!("Saved {name}")));
                 true
             }
@@ -1442,6 +1588,8 @@ impl EpsilonApp {
                 self.paste_count = 0;
                 self.file_path = Some(path.to_path_buf());
                 self.saved_document = self.document.clone();
+                self.last_autosave = Instant::now();
+                self.discard_recovery_files();
                 self.file_feedback = Some(FileFeedback::Opened(format!("Opened {name}")));
                 true
             }
@@ -1494,6 +1642,8 @@ impl EpsilonApp {
         self.paste_count = 0;
         self.file_path = None;
         self.pending_action = None;
+        self.last_autosave = Instant::now();
+        self.discard_recovery_files();
         self.file_feedback = Some(FileFeedback::New("New document".to_owned()));
     }
 
@@ -1583,6 +1733,7 @@ impl EpsilonApp {
             PendingAction::Open => self.open_document_dialog(),
             PendingAction::Quit => {
                 self.allow_close = true;
+                self.discard_recovery_files();
                 request_quit(ctx);
             }
         }
@@ -4135,9 +4286,18 @@ impl eframe::App for EpsilonApp {
             }
         }
 
+        if self.recovery_offer.is_none()
+            && self.is_dirty()
+            && !self.history_blocked()
+            && self.last_autosave.elapsed() >= AUTOSAVE_INTERVAL
+        {
+            self.autosave_now();
+        }
+
         self.sync_window_title(ui.ctx());
         let canvas_rect = self.show_shell(ui);
         self.handle_shortcuts(ui.ctx(), canvas_rect);
+        self.recovery_window(ui.ctx());
         self.unsaved_changes_window(ui.ctx());
         self.about_window(ui.ctx());
         self.help_window(ui.ctx());
@@ -5572,6 +5732,88 @@ mod tests {
         assert!(!app.is_dirty());
         let saved = EpsilonFile::load_from_path(&path).expect("guard save wrote the file");
         assert_eq!(saved.document.elements.len(), expected_count);
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn autosave_is_offered_and_recovered_after_a_crash() {
+        let dir = file_test_dir("recovery");
+        let store = RecoveryStore::new(dir.join("recovery"));
+        let source = dir.join("scene.epsilon");
+        let mut app = selection_app();
+        app.recovery_store = Some(store.clone());
+        app.file_path = Some(source.clone());
+        assert!(app.autosave_now(), "dirty document is autosaved");
+        let saved_document = app.document.clone();
+
+        // Simulate a crash: no normal save or recovery cleanup happens.
+        let mut next = EpsilonApp {
+            recovery_store: Some(store.clone()),
+            ..Default::default()
+        };
+        assert!(next.offer_recovery());
+        next.apply_recovery();
+
+        assert_eq!(next.document, saved_document);
+        assert_eq!(next.file_path.as_deref(), Some(source.as_path()));
+        assert!(next.is_dirty(), "recovered work must prompt before saving");
+        assert!(matches!(
+            next.file_feedback,
+            Some(FileFeedback::Recovered(ref message)) if message.contains("Recovered")
+        ));
+        assert!(
+            store.latest_path().expect("list recovery").is_none(),
+            "recovery files are removed after a decision"
+        );
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn recovering_old_autosave_does_not_reuse_live_history() {
+        let dir = file_test_dir("recovery-history");
+        let store = RecoveryStore::new(dir.join("recovery"));
+        let mut app = selection_app();
+        app.recovery_store = Some(store.clone());
+        assert!(app.autosave_now());
+
+        let mut next = EpsilonApp {
+            recovery_store: Some(store.clone()),
+            ..Default::default()
+        };
+        assert!(next.offer_recovery());
+        next.apply_recovery();
+        assert_eq!(next.history.undo_len(), 0);
+        assert!(next.selected.is_empty());
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn recovery_can_be_discarded_and_clean_documents_are_not_autosaved() {
+        let dir = file_test_dir("recovery-discard");
+        let store = RecoveryStore::new(dir.join("recovery"));
+
+        let mut clean = EpsilonApp {
+            recovery_store: Some(store.clone()),
+            ..Default::default()
+        };
+        assert!(!clean.autosave_now());
+        assert!(store.latest_path().expect("list recovery").is_none());
+
+        let mut app = selection_app();
+        app.recovery_store = Some(store.clone());
+        assert!(app.autosave_now());
+        let mut next = EpsilonApp {
+            recovery_store: Some(store.clone()),
+            ..Default::default()
+        };
+        assert!(next.offer_recovery());
+        next.recovery_offer = None;
+        next.discard_recovery_files();
+        assert!(next.document.elements.is_empty());
+        assert!(store.latest_path().expect("list recovery").is_none());
 
         std::fs::remove_dir_all(&dir).ok();
     }

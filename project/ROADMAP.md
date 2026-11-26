@@ -657,12 +657,19 @@ prompt and document intact. Discard paths reset path/history/selection safely.
 Tests cover New reset, Cancel/Discard on New, Save-then-continue and all file
 shortcuts. The live modal and compositor close flow were not manually tested.
 
-### [ ] 5.4 — Autosave and crash recovery
+### [x] 5.4 — Autosave and crash recovery
 
 Periodic autosave to app data dir, crash recovery offer on launch, cleanup policy.
 
-Acceptance: simulated kill restores scene; recovery can be discarded; tests for
-file naming/retention.
+Completed 2026-11-26: dirty documents autosave every 30 seconds through a core
+`RecoveryStore` under `<app data>/recovery`, with sortable timestamp/sequence
+names and only the newest five retained. Launch checks the newest valid autosave
+and offers Recover/Discard; recovery restores the viewport and source path,
+clears history/selection and starts dirty, while discard removes the files.
+Normal save/open/new/discard/quit clears the recovery directory. Tests cover
+naming, retention, corrupt-newest fallback, a simulated crash/recover, reset
+state and discard. The live 30-second timer and launch modal were not manually
+tested.
 
 ### [ ] 5.5 — Recent documents
 

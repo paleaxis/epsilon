@@ -12,6 +12,7 @@
 //! - [`history`] — transaction-based undo/redo (Stage 4).
 //! - [`clipboard`] — portable clipboard payload and paste preparation (Stage 4).
 //! - [`format`] — native `.epsilon` file envelope (Stage 5).
+//! - [`recovery`] — rotating crash-recovery autosaves (Stage 5).
 //! - `io` — Excalidraw import/export (Stage 5, later).
 //! - `export` — PNG/SVG export (Stage 6).
 
@@ -21,4 +22,5 @@ pub mod format;
 pub mod geometry;
 pub mod grid;
 pub mod history;
+pub mod recovery;
 pub mod viewport;
