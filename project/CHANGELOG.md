@@ -4,6 +4,15 @@ Notable changes, newest first. Version sections are added at release time.
 
 ## [Unreleased]
 
+### Added — 2026-11-26 (task 5.2)
+
+- Native Open/Save dialogs with Ctrl+O/Ctrl+S and File menu entries.
+- Atomic `.epsilon` writes via a synced sibling temp file and rename, validated
+  loads, and user-visible failure messages that leave the current document
+  intact.
+- Dirty tracking against the last save/open with a dirty marker in the window
+  title and status bar.
+
 ### Added — 2026-11-26 (task 5.1)
 
 - Native `.epsilon` v1 JSON envelope containing schema version, document,

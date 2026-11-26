@@ -2,8 +2,8 @@
 
 Last updated: 2026-11-26
 Current stage: **Stage 5 — Documents and persistence**
-Last completed task: **5.1 — Native document format v1**
-Next task: **5.2 — Save and open**
+Last completed task: **5.2 — Save and open**
+Next task: **5.3 — New, Save As, close guard**
 
 ## Status
 
@@ -33,7 +33,10 @@ top/middle/bottom edge using rotated world bounds, as one undo transaction.
 Distribution equalises gaps for three or more elements horizontally or
 vertically while keeping the outermost elements fixed. The native `.epsilon`
 format exists in core as a versioned JSON envelope with document, viewport app
-state and preserved extras maps; save/open UI is not wired yet.
+state and preserved extras maps. File → Open/Save (Ctrl+O/Ctrl+S) use native
+dialogs and atomic temp-file-plus-rename writes; the title and status bar show
+the file name and dirty state, and failed operations are reported without
+altering the current document.
 
 Repository layout:
 
@@ -45,7 +48,7 @@ project/                    STATE, ROADMAP, DECISIONS, CHANGELOG
 crates/epsilon-core/        UI-independent engine (no egui dependency)
   src/geometry.rs           Point, Rect, shapes, rough strokes + 29 tests
   src/document.rs           schema-versioned document, shapes, text, styles, paint order, groups, arrange operations
-  src/format.rs             native .epsilon v1 envelope, extras preservation, version errors + 4 tests
+  src/format.rs             native .epsilon v1 envelope, atomic file I/O, extras + 6 tests
   src/history.rs            reversible commands, transactions, bounded undo/redo + 9 tests
   src/clipboard.rs          clipboard JSON payload, paste preparation, group-ID refresh + 7 tests
 crates/epsilon-app/         eframe desktop shell
@@ -129,28 +132,26 @@ Other shell behavior:
   `Context::egui_wants_keyboard_input()`; `cc.storage` is a field.
 - Remote: `origin git@github.com/paleaxis/epsilon.git`, branch `main`.
 
-## Verified commands and results (task 5.1)
+## Verified commands and results (task 5.2)
 
 | Command | Result |
 | --- | --- |
 | `cargo fmt --all -- --check` | exit 0 |
 | `cargo clippy --workspace --all-targets -- -D warnings` | exit 0 |
-| `cargo test --workspace` | **175 passed, 0 failed** (87 app, 88 core) |
+| `cargo test --workspace` | **182 passed, 0 failed** (92 app, 90 core) |
 | `cargo build --workspace` | success, no warnings |
 | `timeout 8 ./target/debug/epsilon` | exit 124 (alive, no stderr) |
 
-Task 5.1 adds core format tests for a full document/app-state round-trip,
-unknown-field preservation at the envelope, app-state and document levels,
-rejection of a future schema version before deserialization, foreign formats,
-malformed JSON, missing fields and an unsupported nested document schema. The
-suite also retains all Stage 4 and earlier tests, including context menus,
-grouping, alignment, distribution, z-order, clipboard, history, shell,
-persistence, viewport, grid, document, styling, rough rendering and shape
-coverage.
+Task 5.2 adds core tests for on-disk save/load/overwrite, malformed files,
+missing files, failed writes leaving existing content and no temp files behind.
+App tests cover save/open round-trip, dirty-to-clean transitions, title/status
+labels, malformed open leaving the document untouched, failed save remaining
+dirty, extension handling and Ctrl+O/Ctrl+S registration. The suite also
+retains task 5.1 format tests and all Stage 4 and earlier coverage.
 
-Native launch was verified by process liveness. The format is core-only at this
-task; no file dialog or on-disk round-trip exists until task 5.2, and the File
-menu still contains only Quit.
+Native launch was verified by process liveness. Path-level save/open was tested
+to disk; the native dialogs themselves were not clicked in a live window, and
+read-only filesystem behaviour was represented by an invalid parent path.
 
 ## Features implemented
 
@@ -207,6 +208,9 @@ menu still contains only Quit.
 - Core `.epsilon` v1 JSON envelope with schema version, document, viewport app
   state, and unknown fields preserved at envelope, document and app-state
   levels; future versions and foreign formats get explicit errors.
+- File → Open/Save with native rfd dialogs, Ctrl+O/Ctrl+S, atomic same-directory
+  temp write plus rename, dirty snapshot tracking, title/status file indicators
+  and user-visible failures without data loss.
 - Persisted theme/tool; eframe-persisted window geometry and panel widths.
 - Tool palette with shortcuts, painted icons and accessible names.
 - Dark/light themes with central palette and contrast tests.
@@ -238,8 +242,9 @@ automation allowed). Items requiring a human reviewer:
 ## Known issues / limitations
 
 - Edit contains Undo/Redo, Cut/Copy/Paste, Select All, Duplicate, Delete, Group,
-  Ungroup, Order and the Arrange alignment/distribution submenu. File has only
-  Quit until save/open is wired in task 5.2.
+  Ungroup, Order and the Arrange alignment/distribution submenu. File has
+  Open/Save and Quit; New, Save As and the unsaved-changes close guard arrive in
+  task 5.3.
 - Arrange commands have no keyboard shortcuts; they are available only from the
   Edit menu, and the menu itself was not clicked in a live window.
 - Z-order moves rewrite paint slots densely (0..n), so elements whose slot
@@ -262,7 +267,7 @@ automation allowed). Items requiring a human reviewer:
 
 1. Read `AGENTS.md`, `project/ROADMAP.md`, this file, `project/DECISIONS.md`.
 2. `git status` must be clean; run `cargo test --workspace` for the baseline.
-3. Start with the first incomplete task, 5.2 — Save and open.
+3. Start with the first incomplete task, 5.3 — New, Save As, close guard.
 4. Verify format, clippy, tests, build, and `timeout 8 ./target/debug/epsilon`.
 5. Update this file, `ROADMAP.md`, `CHANGELOG.md`, then commit and push.
 

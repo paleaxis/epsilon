@@ -23,6 +23,8 @@ eframe = { version = "0.37", default-features = false, features = [
 ] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# Native file dialogs for save/open. Linux uses the desktop portal (no GTK/WebView).
+rfd = "0.18"
 
 [profile.release]
 lto = "thin"

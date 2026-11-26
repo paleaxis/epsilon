@@ -915,3 +915,27 @@ additive fields without ever accepting a future schema as if it were v1. The
 document model gains one serialized field and `Viewport` gains serde derives,
 with no new dependencies. Save/open, dirty tracking and atomic writes are
 intentionally left to 5.2.
+
+---
+
+## D-046 — Save uses rfd, atomic sibling writes, and a saved-document snapshot for dirty state (2026-11-26)
+
+**Context.** Task 5.2 needs native file dialogs, dirty tracking, and writes that
+cannot truncate an existing file when serialization or I/O fails.
+
+**Decision.** Add `rfd` 0.18 (xdg-portal/Wayland defaults on Linux; no GTK or
+WebView). Core owns path I/O: `EpsilonFile::save_to_path` writes pretty JSON to a
+hidden unique sibling temp file, calls `sync_all`, then renames over the target;
+`load_from_path` reads and validates through the existing v1 checks. The app
+keeps the path and a clone of the document at the last successful save/open, so
+`is_dirty` is a direct document comparison that also becomes clean again after
+undoing back to the saved state. File → Open/Save and Ctrl+O/Ctrl+S invoke the
+dialogs; errors and successes appear in the status bar, and the title/status bar
+show the file name plus a dirty marker. Save As appends `.epsilon` when the
+chosen extension differs. Viewport-only changes do not mark the document dirty.
+
+**Consequences.** Failed writes leave the destination untouched and the document
+dirty. Dirty tracking costs one document clone and a comparison only when the
+title or status label is drawn. Dialog interactions cannot be exercised
+headlessly; path-level round-trips and failure paths are covered by tests. New,
+Save As and the close guard remain task 5.3.

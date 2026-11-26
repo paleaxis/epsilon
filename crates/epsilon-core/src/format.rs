@@ -11,7 +11,12 @@
 //! missing-field error.
 
 use std::collections::BTreeMap;
+use std::ffi::OsString;
 use std::fmt;
+use std::fs::File;
+use std::io::Write;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -25,6 +30,8 @@ pub const FILE_FORMAT: &str = "epsilon";
 pub const FILE_SCHEMA_VERSION: u32 = 1;
 /// File extension, without the leading dot.
 pub const FILE_EXTENSION: &str = "epsilon";
+
+static TEMP_COUNTER: AtomicU64 = AtomicU64::new(1);
 
 /// Per-document application state. Unknown fields are preserved for
 /// forward-compatible round-trips.
@@ -64,6 +71,35 @@ impl EpsilonFile {
     /// Serializes the envelope as human-readable JSON.
     pub fn to_json(&self) -> Result<String, FileError> {
         serde_json::to_string_pretty(self).map_err(FileError::Json)
+    }
+
+    /// Writes the envelope atomically: the JSON is fully written and synced to
+    /// a temporary file in the destination directory, then renamed over the
+    /// destination. A failure before the rename leaves any existing file
+    /// untouched.
+    pub fn save_to_path(&self, path: &Path) -> Result<(), FileError> {
+        let json = self.to_json()?;
+        let temp = temporary_path(path);
+        let result = (|| -> std::io::Result<()> {
+            let mut file = File::create(&temp)?;
+            file.write_all(json.as_bytes())?;
+            file.sync_all()?;
+            drop(file);
+            std::fs::rename(&temp, path)
+        })();
+        if let Err(error) = result {
+            // The destination was not touched; remove the partial temp file
+            // best-effort without hiding the original I/O error.
+            let _ = std::fs::remove_file(&temp);
+            return Err(FileError::Io(error));
+        }
+        Ok(())
+    }
+
+    /// Reads and validates a native document file.
+    pub fn load_from_path(path: &Path) -> Result<Self, FileError> {
+        let text = std::fs::read_to_string(path).map_err(FileError::Io)?;
+        Self::from_json(&text)
     }
 
     /// Parses and validates a native document file.
@@ -107,6 +143,8 @@ impl EpsilonFile {
 #[derive(Debug)]
 pub enum FileError {
     Json(serde_json::Error),
+    /// Reading or writing the file failed.
+    Io(std::io::Error),
     /// The top-level JSON value was not an object.
     ExpectedObject,
     /// The envelope has no string `format` field.
@@ -133,6 +171,7 @@ impl fmt::Display for FileError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Json(error) => write!(f, "invalid document JSON: {error}"),
+            Self::Io(error) => write!(f, "file error: {error}"),
             Self::ExpectedObject => write!(f, "not an Epsilon document: expected a JSON object"),
             Self::MissingFormat => write!(f, "not an Epsilon document: missing string `format`"),
             Self::MissingVersion => {
@@ -157,10 +196,27 @@ impl fmt::Display for FileError {
     }
 }
 
+/// A hidden sibling of `path`, keeping the rename on the same filesystem.
+fn temporary_path(path: &Path) -> PathBuf {
+    let mut name = OsString::from(".");
+    if let Some(file_name) = path.file_name() {
+        name.push(file_name);
+    } else {
+        name.push("document");
+    }
+    name.push(format!(
+        ".{}.{}.tmp",
+        std::process::id(),
+        TEMP_COUNTER.fetch_add(1, Ordering::Relaxed)
+    ));
+    path.with_file_name(name)
+}
+
 impl std::error::Error for FileError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Json(error) => Some(error),
+            Self::Io(error) => Some(error),
             _ => None,
         }
     }
@@ -274,6 +330,72 @@ mod tests {
         ));
         assert!(error.to_string().contains("version 2"));
         assert!(error.to_string().contains("version 1"));
+    }
+
+    fn test_dir(label: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "epsilon-format-{}-{}-{label}",
+            std::process::id(),
+            TEMP_COUNTER.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&dir).expect("create temp dir");
+        dir
+    }
+
+    #[test]
+    fn save_and_load_round_trip_on_disk() {
+        let dir = test_dir("round-trip");
+        let path = dir.join("scene.epsilon");
+        let file = sample_file();
+
+        file.save_to_path(&path).expect("save file");
+        let loaded = EpsilonFile::load_from_path(&path).expect("load file");
+        assert_eq!(loaded, file);
+
+        let mut changed = file.clone();
+        changed.app_state.viewport.zoom = 3.0;
+        changed.save_to_path(&path).expect("overwrite file");
+        assert_eq!(EpsilonFile::load_from_path(&path).unwrap(), changed);
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn failed_save_preserves_existing_files_and_reports_read_errors() {
+        let dir = test_dir("failures");
+        let path = dir.join("scene.epsilon");
+        std::fs::write(&path, "original").expect("seed file");
+
+        // A file cannot be used as a parent directory, so the temp file cannot
+        // be created even though the intended destination exists.
+        let blocker = dir.join("not-a-directory");
+        std::fs::write(&blocker, "x").expect("seed blocker");
+        let file = sample_file();
+        assert!(matches!(
+            file.save_to_path(&blocker.join("scene.epsilon")),
+            Err(FileError::Io(_))
+        ));
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "original");
+
+        std::fs::write(&path, "not json").expect("malformed file");
+        assert!(matches!(
+            EpsilonFile::load_from_path(&path),
+            Err(FileError::Json(_))
+        ));
+        assert!(matches!(
+            EpsilonFile::load_from_path(&dir.join("missing.epsilon")),
+            Err(FileError::Io(_))
+        ));
+
+        let leftovers: Vec<String> = std::fs::read_dir(&dir)
+            .expect("read temp dir")
+            .filter_map(|entry| entry.ok())
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .filter(|name| name.ends_with(".tmp"))
+            .collect();
+        assert!(leftovers.is_empty(), "temp files left: {leftovers:?}");
+
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

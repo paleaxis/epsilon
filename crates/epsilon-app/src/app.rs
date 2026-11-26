@@ -1,4 +1,5 @@
 use std::collections::HashSet;
+use std::path::{Path, PathBuf};
 
 use eframe::egui::{self, Align, Layout, RichText};
 
@@ -7,6 +8,7 @@ use epsilon_core::document::{
     Align as ElementAlign, Color as DocumentColor, Distribute as ElementDistribute, Document,
     Element, ElementId, ElementKind, FillStyle, StrokeStyle, TextAlign, ZOrderMove,
 };
+use epsilon_core::format::{EpsilonFile, FILE_EXTENSION};
 use epsilon_core::geometry::{
     Point, Rect, ResizeHandle, arrowhead_points, constrain_angle, resize_rect, rotate_point,
     rough_polyline, simplify_polyline, smooth_polyline, snap_angle,
@@ -527,6 +529,28 @@ impl ClipboardFeedback {
     }
 }
 
+/// Result of the most recent save or open, shown in the status bar.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum FileFeedback {
+    Saved(String),
+    Opened(String),
+    Error(String),
+}
+
+impl FileFeedback {
+    fn message(&self) -> &str {
+        match self {
+            Self::Saved(name) => name,
+            Self::Opened(name) => name,
+            Self::Error(message) => message,
+        }
+    }
+
+    fn is_error(&self) -> bool {
+        matches!(self, Self::Error(_))
+    }
+}
+
 /// Actions offered by the canvas context menu. The list is filtered per target
 /// so the menu never shows a command that cannot run.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -631,6 +655,14 @@ pub struct EpsilonApp {
     viewport: Viewport,
     /// In-memory document being edited.
     document: Document,
+    /// Path of the file this document was last saved to or opened from.
+    file_path: Option<PathBuf>,
+    /// Document snapshot at the last save/open, used for dirty tracking.
+    saved_document: Document,
+    /// Result of the last save/open command.
+    file_feedback: Option<FileFeedback>,
+    /// Last window title sent to the compositor, to avoid repeating commands.
+    last_window_title: String,
     /// Reversible edit history for the document.
     history: History,
     /// Last failed history operation, shown in the status bar.
@@ -686,6 +718,10 @@ impl Default for EpsilonApp {
             help_open: false,
             viewport: Viewport::default(),
             document: Document::default(),
+            file_path: None,
+            saved_document: Document::default(),
+            file_feedback: None,
+            last_window_title: String::new(),
             history: History::default(),
             history_error: None,
             clipboard: None,
@@ -726,6 +762,8 @@ enum Action {
     Cut,
     Copy,
     Paste,
+    Open,
+    Save,
     Delete,
     Duplicate,
     SelectAll,
@@ -860,6 +898,20 @@ const KEYBINDINGS: &[KeyBinding] = &[
         modifiers: egui::Modifiers::COMMAND,
         action: Action::Paste,
         description: "Paste",
+    },
+    KeyBinding {
+        shortcut: "Ctrl+O",
+        key: egui::Key::O,
+        modifiers: egui::Modifiers::COMMAND,
+        action: Action::Open,
+        description: "Open document",
+    },
+    KeyBinding {
+        shortcut: "Ctrl+S",
+        key: egui::Key::S,
+        modifiers: egui::Modifiers::COMMAND,
+        action: Action::Save,
+        description: "Save document",
     },
     KeyBinding {
         shortcut: "Delete",
@@ -1271,6 +1323,151 @@ impl EpsilonApp {
         }
     }
 
+    /// Name shown in the title and status bar. Untitled documents have no path
+    /// yet and are explicitly labelled.
+    fn document_display_name(&self) -> String {
+        self.file_path
+            .as_ref()
+            .and_then(|path| path.file_name())
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "Untitled".to_owned())
+    }
+
+    /// Dirty tracking compares against the snapshot at the last save/open, so
+    /// undoing back to that state is clean again without mutation hooks.
+    fn is_dirty(&self) -> bool {
+        self.document != self.saved_document
+    }
+
+    fn window_title(&self) -> String {
+        let marker = if self.is_dirty() { "• " } else { "" };
+        format!("{marker}{} — Epsilon", self.document_display_name())
+    }
+
+    fn sync_window_title(&mut self, ctx: &egui::Context) {
+        let title = self.window_title();
+        if title != self.last_window_title {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Title(title.clone()));
+            self.last_window_title = title;
+        }
+    }
+
+    /// Serializes the document and viewport to `path`. The destination is only
+    /// replaced after the full JSON has been written and synced.
+    fn save_to_path(&mut self, path: &Path) -> bool {
+        let name = path
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_else(|| path.display().to_string());
+        let mut file = EpsilonFile::new(self.document.clone());
+        file.app_state.viewport = self.viewport;
+        match file.save_to_path(path) {
+            Ok(()) => {
+                self.file_path = Some(path.to_path_buf());
+                self.saved_document = self.document.clone();
+                self.file_feedback = Some(FileFeedback::Saved(format!("Saved {name}")));
+                true
+            }
+            Err(error) => {
+                self.file_feedback = Some(FileFeedback::Error(format!("Save failed: {error}")));
+                false
+            }
+        }
+    }
+
+    /// Loads a validated document, replacing the current scene and resetting
+    /// session-only state (history, selection, editor). On failure nothing in
+    /// the current document changes.
+    fn open_from_path(&mut self, path: &Path) -> bool {
+        let name = path
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_else(|| path.display().to_string());
+        match EpsilonFile::load_from_path(path) {
+            Ok(file) => {
+                self.document = file.document;
+                self.viewport = file.app_state.viewport;
+                self.viewport.set_zoom(self.viewport.zoom);
+                self.history.clear();
+                self.history_error = None;
+                self.property_edit_before = None;
+                self.pointer_mode = PointerMode::Idle;
+                self.transform_original.clear();
+                self.selected.clear();
+                self.editing_text = None;
+                self.editing_text_is_new = false;
+                self.text_buffer.clear();
+                self.text_editor_needs_focus = false;
+                self.paste_count = 0;
+                self.file_path = Some(path.to_path_buf());
+                self.saved_document = self.document.clone();
+                self.file_feedback = Some(FileFeedback::Opened(format!("Opened {name}")));
+                true
+            }
+            Err(error) => {
+                self.file_feedback = Some(FileFeedback::Error(format!("Open failed: {error}")));
+                false
+            }
+        }
+    }
+
+    fn open_document(&mut self) {
+        if self.history_blocked() {
+            self.file_feedback = Some(FileFeedback::Error(
+                "Finish the current edit before opening a file".to_owned(),
+            ));
+            return;
+        }
+        let Some(path) = rfd::FileDialog::new()
+            .add_filter("Epsilon document", &[FILE_EXTENSION])
+            .set_title("Open Epsilon document")
+            .pick_file()
+        else {
+            return;
+        };
+        self.open_from_path(&path);
+    }
+
+    fn save_document(&mut self) {
+        if self.history_blocked() {
+            self.file_feedback = Some(FileFeedback::Error(
+                "Finish the current edit before saving".to_owned(),
+            ));
+            return;
+        }
+        match self.file_path.clone() {
+            Some(path) => {
+                self.save_to_path(&path);
+            }
+            None => self.save_document_as(),
+        }
+    }
+
+    fn save_document_as(&mut self) {
+        if self.history_blocked() {
+            self.file_feedback = Some(FileFeedback::Error(
+                "Finish the current edit before saving".to_owned(),
+            ));
+            return;
+        }
+        let default_name = if self.file_path.is_some() {
+            self.document_display_name()
+        } else {
+            format!("untitled.{FILE_EXTENSION}")
+        };
+        let mut dialog = rfd::FileDialog::new()
+            .add_filter("Epsilon document", &[FILE_EXTENSION])
+            .set_title("Save Epsilon document")
+            .set_file_name(default_name);
+        if let Some(parent) = self.file_path.as_ref().and_then(|path| path.parent()) {
+            dialog = dialog.set_directory(parent);
+        }
+        let Some(path) = dialog.save_file() else {
+            return;
+        };
+        self.save_to_path(&with_document_extension(path));
+    }
+
     fn paste_from_menu(&mut self) -> bool {
         match self.clipboard.clone() {
             Some(payload) => self.paste_payload(payload),
@@ -1626,6 +1823,21 @@ impl EpsilonApp {
                     // Only actions that already work are listed. File/Edit will
                     // grow when document and editing stages land.
                     ui.menu_button("File", |ui| {
+                        if ui
+                            .add(egui::Button::new("Open…").shortcut_text("Ctrl+O"))
+                            .clicked()
+                        {
+                            self.open_document();
+                            ui.close();
+                        }
+                        if ui
+                            .add(egui::Button::new("Save").shortcut_text("Ctrl+S"))
+                            .clicked()
+                        {
+                            self.save_document();
+                            ui.close();
+                        }
+                        ui.separator();
                         if ui.button("Quit").clicked() {
                             request_quit(ui.ctx());
                         }
@@ -1979,6 +2191,12 @@ impl EpsilonApp {
             }
             Action::Paste => {
                 self.paste_from_menu();
+            }
+            Action::Open => {
+                self.open_document();
+            }
+            Action::Save => {
+                self.save_document();
             }
             Action::Delete => {
                 self.delete_selection();
@@ -3493,6 +3711,22 @@ impl EpsilonApp {
                             text.weak()
                         });
                     }
+                    if let Some(feedback) = &self.file_feedback {
+                        ui.add_space(12.0);
+                        let text = RichText::new(feedback.message()).small();
+                        ui.label(if feedback.is_error() {
+                            text.color(ui.visuals().error_fg_color)
+                        } else {
+                            text.weak()
+                        });
+                    }
+                    ui.add_space(12.0);
+                    let dirty = if self.is_dirty() { "•" } else { "" };
+                    ui.label(
+                        RichText::new(format!("{}{dirty}", self.document_display_name()))
+                            .small()
+                            .weak(),
+                    );
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         ui.label(
                             RichText::new(concat!("Epsilon ", env!("CARGO_PKG_VERSION"))).weak(),
@@ -3684,6 +3918,19 @@ impl EpsilonApp {
     }
 }
 
+/// Appends the native extension when the chosen name has none or a different
+/// one, matching common Save-As behaviour.
+fn with_document_extension(mut path: PathBuf) -> PathBuf {
+    let has_extension = path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case(FILE_EXTENSION));
+    if !has_extension {
+        path.set_extension(FILE_EXTENSION);
+    }
+    path
+}
+
 fn request_quit(ctx: &egui::Context) {
     ctx.send_viewport_cmd(egui::ViewportCommand::Close);
 }
@@ -3705,6 +3952,7 @@ fn pointer_anchor(ctx: &egui::Context, canvas_rect: egui::Rect) -> Point {
 
 impl eframe::App for EpsilonApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        self.sync_window_title(ui.ctx());
         let canvas_rect = self.show_shell(ui);
         self.handle_shortcuts(ui.ctx(), canvas_rect);
         self.about_window(ui.ctx());
@@ -4971,6 +5219,125 @@ mod tests {
             egui::OutputCommand::CopyText(text) => Some(text.clone()),
             _ => None,
         })
+    }
+
+    fn file_test_dir(label: &str) -> PathBuf {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static COUNTER: AtomicU64 = AtomicU64::new(1);
+        let dir = std::env::temp_dir().join(format!(
+            "epsilon-app-{}-{}-{label}",
+            std::process::id(),
+            COUNTER.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&dir).expect("create temp dir");
+        dir
+    }
+
+    #[test]
+    fn save_and_open_round_trip_updates_dirty_state() {
+        let dir = file_test_dir("save-open");
+        let path = dir.join("scene.epsilon");
+        let mut app = selection_app();
+        assert!(app.is_dirty(), "unsaved edits are dirty");
+        assert!(app.window_title().contains('•'));
+
+        assert!(app.save_to_path(&path));
+        assert!(path.exists());
+        assert!(!app.is_dirty());
+        assert_eq!(app.file_path.as_deref(), Some(path.as_path()));
+        assert_eq!(app.window_title(), "scene.epsilon — Epsilon");
+        assert!(matches!(
+            app.file_feedback,
+            Some(FileFeedback::Saved(ref message)) if message == "Saved scene.epsilon"
+        ));
+        let saved = app.document.clone();
+
+        app.commit_shape(
+            ElementKind::Rectangle,
+            Point::new(200.0, 200.0),
+            Point::new(240.0, 240.0),
+        );
+        assert!(app.is_dirty());
+
+        let mut opened = EpsilonApp::default();
+        assert!(!opened.is_dirty(), "a fresh empty document is clean");
+        assert!(opened.open_from_path(&path));
+        assert_eq!(opened.document, saved);
+        assert!(!opened.is_dirty());
+        assert_eq!(opened.file_path.as_deref(), Some(path.as_path()));
+        assert_eq!(opened.history.undo_len(), 0);
+        assert!(matches!(
+            opened.file_feedback,
+            Some(FileFeedback::Opened(ref message)) if message == "Opened scene.epsilon"
+        ));
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn open_errors_leave_the_current_document_untouched() {
+        let dir = file_test_dir("open-error");
+        let path = dir.join("broken.epsilon");
+        std::fs::write(&path, "not json").expect("seed malformed file");
+
+        let mut app = selection_app();
+        let original = app.document.clone();
+        assert!(!app.open_from_path(&path));
+        assert_eq!(app.document, original);
+        assert!(matches!(
+            app.file_feedback,
+            Some(FileFeedback::Error(ref message)) if message.contains("Open failed")
+        ));
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn failed_save_reports_the_error_and_keeps_the_document_dirty() {
+        let dir = file_test_dir("save-error");
+        let blocker = dir.join("not-a-directory");
+        std::fs::write(&blocker, "x").expect("seed blocker");
+
+        let mut app = selection_app();
+        let original = app.document.clone();
+        assert!(!app.save_to_path(&blocker.join("scene.epsilon")));
+        assert_eq!(app.document, original);
+        assert!(app.is_dirty());
+        assert!(app.file_path.is_none());
+        assert!(matches!(
+            app.file_feedback,
+            Some(FileFeedback::Error(ref message)) if message.contains("Save failed")
+        ));
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn save_as_keeps_or_adds_the_epsilon_extension() {
+        assert_eq!(
+            with_document_extension(PathBuf::from("scene")),
+            PathBuf::from("scene.epsilon")
+        );
+        assert_eq!(
+            with_document_extension(PathBuf::from("scene.EPSILON")),
+            PathBuf::from("scene.EPSILON")
+        );
+        assert_eq!(
+            with_document_extension(PathBuf::from("scene.json")),
+            PathBuf::from("scene.epsilon")
+        );
+    }
+
+    #[test]
+    fn file_shortcuts_are_registered() {
+        for (key, action) in [(egui::Key::O, Action::Open), (egui::Key::S, Action::Save)] {
+            assert!(
+                KEYBINDINGS.iter().any(|binding| binding.key == key
+                    && binding.modifiers == egui::Modifiers::COMMAND
+                    && binding.action == action),
+                "missing file shortcut for {key:?}"
+            );
+        }
     }
 
     fn selection_app() -> EpsilonApp {

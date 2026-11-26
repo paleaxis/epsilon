@@ -624,13 +624,23 @@ Round-trip tests cover the document, grouped elements, viewport/app state,
 extras preservation and nested document schema mismatch. File pickers and
 disk I/O remain task 5.2.
 
-### [ ] 5.2 — Save and open
+### [x] 5.2 — Save and open
 
 Native dialogs (rfd), dirty tracking, atomic writes (temp file + rename), error
 surfacing without data loss.
 
 Acceptance: save/open round-trip on disk; read-only path and malformed file
 produce user-visible errors; no partial overwrite on failure.
+
+Completed 2026-11-26: `EpsilonFile` gained atomic save and validated load;
+`rfd` supplies native Open/Save dialogs on Ctrl+O/Ctrl+S and the File menu. The
+app snapshots the document at save/open for dirty tracking, shows the file name
+and dirty marker in the title/status bar, and reports failures in the status
+bar without replacing the current scene. Save writes JSON to a hidden sibling
+temp file, syncs it, then renames, so a failed write leaves the destination
+untouched. Tests cover disk round-trips, malformed/missing files, failed writes,
+extension handling and shortcut registration; dialog clicks were not manually
+inspected.
 
 ### [ ] 5.3 — New, Save As, close guard
 
