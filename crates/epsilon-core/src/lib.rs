@@ -11,11 +11,13 @@
 //! - [`viewport`] — camera, zoom and screen/world transforms (Stage 2).
 //! - [`history`] — transaction-based undo/redo (Stage 4).
 //! - [`clipboard`] — portable clipboard payload and paste preparation (Stage 4).
-//! - `io` — native document format and Excalidraw import/export (Stage 5).
+//! - [`format`] — native `.epsilon` file envelope (Stage 5).
+//! - `io` — Excalidraw import/export (Stage 5, later).
 //! - `export` — PNG/SVG export (Stage 6).
 
 pub mod clipboard;
 pub mod document;
+pub mod format;
 pub mod geometry;
 pub mod grid;
 pub mod history;

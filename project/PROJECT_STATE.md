@@ -1,9 +1,9 @@
 # Project State
 
 Last updated: 2026-11-26
-Current stage: **Stage 4 — Editing experience**
-Last completed task: **4.9 — Distribution** (Stage 4 complete)
-Next task: **5.1 — Native document format v1**
+Current stage: **Stage 5 — Documents and persistence**
+Last completed task: **5.1 — Native document format v1**
+Next task: **5.2 — Save and open**
 
 ## Status
 
@@ -31,7 +31,9 @@ select whole groups. Each group operation is one undo entry. Alignment moves
 two or more selected elements onto a shared left/center/right or
 top/middle/bottom edge using rotated world bounds, as one undo transaction.
 Distribution equalises gaps for three or more elements horizontally or
-vertically while keeping the outermost elements fixed.
+vertically while keeping the outermost elements fixed. The native `.epsilon`
+format exists in core as a versioned JSON envelope with document, viewport app
+state and preserved extras maps; save/open UI is not wired yet.
 
 Repository layout:
 
@@ -43,6 +45,7 @@ project/                    STATE, ROADMAP, DECISIONS, CHANGELOG
 crates/epsilon-core/        UI-independent engine (no egui dependency)
   src/geometry.rs           Point, Rect, shapes, rough strokes + 29 tests
   src/document.rs           schema-versioned document, shapes, text, styles, paint order, groups, arrange operations
+  src/format.rs             native .epsilon v1 envelope, extras preservation, version errors + 4 tests
   src/history.rs            reversible commands, transactions, bounded undo/redo + 9 tests
   src/clipboard.rs          clipboard JSON payload, paste preparation, group-ID refresh + 7 tests
 crates/epsilon-app/         eframe desktop shell
@@ -126,29 +129,28 @@ Other shell behavior:
   `Context::egui_wants_keyboard_input()`; `cc.storage` is a field.
 - Remote: `origin git@github.com/paleaxis/epsilon.git`, branch `main`.
 
-## Verified commands and results (task 4.9)
+## Verified commands and results (task 5.1)
 
 | Command | Result |
 | --- | --- |
 | `cargo fmt --all -- --check` | exit 0 |
 | `cargo clippy --workspace --all-targets -- -D warnings` | exit 0 |
-| `cargo test --workspace` | **171 passed, 0 failed** (87 app, 84 core) |
+| `cargo test --workspace` | **175 passed, 0 failed** (87 app, 88 core) |
 | `cargo build --workspace` | success, no warnings |
 | `timeout 8 ./target/debug/epsilon` | exit 124 (alive, no stderr) |
 
-Task 4.9 adds core tests for equal-gap horizontal and vertical distribution
-with different sizes, overlapping elements, unchanged outermost elements,
-already-even selections, fewer than three elements and unknown IDs. App tests
-cover one history transaction, selection preservation, exact undo, no history
-for an already-distributed selection and the three-element gate. The suite also
-retains task 4.8 alignment tests, task 4.7 grouping tests, task 4.6 context-menu
-tests, task 4.5 z-order tests, task 4.4 selection tests, task 4.3 clipboard
-tests, core history tests and all earlier shell, persistence, viewport, grid,
-document, styling, rough rendering and shape coverage.
+Task 5.1 adds core format tests for a full document/app-state round-trip,
+unknown-field preservation at the envelope, app-state and document levels,
+rejection of a future schema version before deserialization, foreign formats,
+malformed JSON, missing fields and an unsupported nested document schema. The
+suite also retains all Stage 4 and earlier tests, including context menus,
+grouping, alignment, distribution, z-order, clipboard, history, shell,
+persistence, viewport, grid, document, styling, rough rendering and shape
+coverage.
 
-Native launch was verified by process liveness. Alignment and distribution
-were exercised through core and app tests; interactive Edit → Arrange menu
-clicks were not manually inspected in a live window.
+Native launch was verified by process liveness. The format is core-only at this
+task; no file dialog or on-disk round-trip exists until task 5.2, and the File
+menu still contains only Quit.
 
 ## Features implemented
 
@@ -202,6 +204,9 @@ clicks were not manually inspected in a live window.
   more selected elements, using rotated world bounds and one undo entry.
 - Distribute horizontally/vertically from Edit → Arrange for three or more
   selected elements with equal gaps, fixed outer elements and one undo entry.
+- Core `.epsilon` v1 JSON envelope with schema version, document, viewport app
+  state, and unknown fields preserved at envelope, document and app-state
+  levels; future versions and foreign formats get explicit errors.
 - Persisted theme/tool; eframe-persisted window geometry and panel widths.
 - Tool palette with shortcuts, painted icons and accessible names.
 - Dark/light themes with central palette and contrast tests.
@@ -234,7 +239,7 @@ automation allowed). Items requiring a human reviewer:
 
 - Edit contains Undo/Redo, Cut/Copy/Paste, Select All, Duplicate, Delete, Group,
   Ungroup, Order and the Arrange alignment/distribution submenu. File has only
-  Quit until document I/O (Stage 5).
+  Quit until save/open is wired in task 5.2.
 - Arrange commands have no keyboard shortcuts; they are available only from the
   Edit menu, and the menu itself was not clicked in a live window.
 - Z-order moves rewrite paint slots densely (0..n), so elements whose slot
@@ -245,9 +250,10 @@ automation allowed). Items requiring a human reviewer:
   window cannot be pasted from the menu. Paste silently ignores non-Epsilon text
   apart from status-bar feedback.
 - Shell polish and manual verification pass remains (1.9).
-- Undo history is session-only and is not saved with settings; document
-  persistence arrives in Stage 5. While the canvas text editor is open, its
-  own TextEdit undo applies instead of document history.
+- Undo history is session-only and is not saved with settings; only the
+  serialization envelope exists, with save/open arriving in task 5.2. While the
+  canvas text editor is open, its own TextEdit undo applies instead of document
+  history.
 - No CI; local verification only. No visual/screenshot review performed.
 - Window/panel restore relies on eframe/egui and was not re-measured under niri.
 - Project license: GPL-3.0 (`LICENSE`); manifests declare `GPL-3.0-only`.
@@ -256,7 +262,7 @@ automation allowed). Items requiring a human reviewer:
 
 1. Read `AGENTS.md`, `project/ROADMAP.md`, this file, `project/DECISIONS.md`.
 2. `git status` must be clean; run `cargo test --workspace` for the baseline.
-3. Start with the first incomplete task, 5.1 — Native document format v1.
+3. Start with the first incomplete task, 5.2 — Save and open.
 4. Verify format, clippy, tests, build, and `timeout 8 ./target/debug/epsilon`.
 5. Update this file, `ROADMAP.md`, `CHANGELOG.md`, then commit and push.
 

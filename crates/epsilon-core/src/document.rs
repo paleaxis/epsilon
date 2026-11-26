@@ -4,7 +4,7 @@
 //! insertion order; paint order is derived from each element's `z_order`, with
 //! insertion order breaking ties so equal z-order values remain stable.
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use serde::{Deserialize, Serialize};
@@ -21,6 +21,10 @@ fn default_font_size() -> f64 {
 
 /// Current serialized document schema version.
 pub const SCHEMA_VERSION: u32 = 1;
+
+/// Unknown serialized fields preserved verbatim for future-compatible
+/// round-trips. Keys are JSON field names; values keep their JSON shape.
+pub type Extras = BTreeMap<String, serde_json::Value>;
 
 /// Stable identifier for an element.
 ///
@@ -535,6 +539,9 @@ pub struct Document {
     pub schema_version: u32,
     pub canvas: CanvasSettings,
     pub elements: Vec<Element>,
+    /// Unknown document fields, preserved on load and written back on save.
+    #[serde(default, flatten)]
+    pub extras: Extras,
 }
 
 impl Default for Document {
@@ -549,6 +556,7 @@ impl Document {
             schema_version: SCHEMA_VERSION,
             canvas: CanvasSettings::default(),
             elements: Vec::new(),
+            extras: Extras::new(),
         }
     }
 

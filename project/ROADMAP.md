@@ -603,13 +603,26 @@ the native document format.
 
 ## Stage 5 — Documents and persistence
 
-### [ ] 5.1 — Native document format v1
+The native v1 serialization envelope is in place; save/open and the remaining
+document lifecycle tasks follow.
+
+### [x] 5.1 — Native document format v1
 
 Versioned JSON format (`.epsilon`): schema version, document, app state, unknown
 fields preserved in `extras` maps.
 
 Acceptance: round-trip tests incl. unknown-field preservation; clear error for
 unsupported future versions.
+
+Completed 2026-11-26: `epsilon_core::format` defines the v1 `EpsilonFile`
+envelope (`format: "epsilon"`, `schema_version: 1`) with the document, a
+`Viewport` app state and flattened extras maps at envelope, app-state and
+document levels. `from_json` validates format and version before
+deserializing, so future files produce `UnsupportedVersion` rather than a
+missing-field error, and foreign or malformed files get explicit errors.
+Round-trip tests cover the document, grouped elements, viewport/app state,
+extras preservation and nested document schema mismatch. File pickers and
+disk I/O remain task 5.2.
 
 ### [ ] 5.2 — Save and open
 

@@ -4,6 +4,14 @@ Notable changes, newest first. Version sections are added at release time.
 
 ## [Unreleased]
 
+### Added — 2026-11-26 (task 5.1)
+
+- Native `.epsilon` v1 JSON envelope containing schema version, document,
+  viewport app state and preserved extras maps at envelope, document and
+  app-state levels.
+- Explicit errors for foreign formats, malformed files, missing version fields
+  and unsupported future envelope/document versions; no save/open UI yet.
+
 ### Added — 2026-11-26 (task 4.9)
 
 - Distribute three or more selected elements horizontally or vertically with

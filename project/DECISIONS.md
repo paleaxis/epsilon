@@ -890,3 +890,28 @@ shortcuts were assigned.
 overlap, and never adds empty history entries. The outer extent is stable, so
 repeated distribution is a no-op. No new dependencies or shortcut-table surface
 were introduced.
+
+---
+
+## D-045 — `.epsilon` v1 envelope validates version first and preserves extras at file/document/app-state levels (2026-11-26)
+
+**Context.** Task 5.1 needs a durable native file format with a schema version,
+document, app state and unknown-field preservation, plus a clear failure for
+files written by a future build.
+
+**Decision.** `epsilon_core::format::EpsilonFile` is the v1 envelope:
+`format: "epsilon"`, `schema_version: 1`, `document`, `app_state`, and a
+flattened `Extras` map. `AppState` holds a serializable `Viewport` plus its own
+extras; `Document` also carries flattened extras. Unknown keys survive
+serialization at all three levels. `from_json` parses to `serde_json::Value`
+first, validates the format marker and envelope version (then the nested
+document schema), and only then deserializes, so future versions fail with
+`UnsupportedVersion` before any incompatible field shapes can produce a
+misleading error. App settings such as theme and tool remain in `app.ron`;
+only per-document view state belongs in the file.
+
+**Consequences.** The format is human-readable and forward-compatible for
+additive fields without ever accepting a future schema as if it were v1. The
+document model gains one serialized field and `Viewport` gains serde derives,
+with no new dependencies. Save/open, dirty tracking and atomic writes are
+intentionally left to 5.2.

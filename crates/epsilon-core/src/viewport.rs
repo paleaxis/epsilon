@@ -11,6 +11,8 @@
 //! - `world_to_screen(p) = p * zoom + offset`
 //! - `screen_to_world(p) = (p - offset) / zoom`
 
+use serde::{Deserialize, Serialize};
+
 use crate::geometry::{Point, Rect};
 
 /// Smallest allowed zoom factor.
@@ -19,7 +21,7 @@ pub const MIN_ZOOM: f64 = 0.1;
 pub const MAX_ZOOM: f64 = 30.0;
 
 /// Camera state for the infinite canvas.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct Viewport {
     /// Screen-space position of the world origin.
     pub offset: Point,
