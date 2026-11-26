@@ -1226,3 +1226,34 @@ lasts while Epsilon runs, so the image is not daemonized after exit. Automated
 tests cover RGBA conversion, empty-document/empty-selection failures and the
 unavailability message without touching the real clipboard; pasting the image
 into an external application remains a manual acceptance item.
+
+---
+
+## D-057 — Dependency-free rotating log and one toast surface for errors (2026-11-27)
+
+**Context.** Task 7.1 requires one actionable, non-blocking error surface and a
+persistent local log with rotation, without telemetry. The app already produced
+errors from three typed fields (`file_feedback`, `clipboard_feedback`,
+`history_error`) that were appended to a crowded status bar, where long messages
+were clipped. The workspace also keeps the dependency graph deliberately small.
+
+**Decision.** `epsilon-app/src/notices.rs` owns a bounded queue of toasts
+(errors 12 s, warnings 8 s, four visible, identical messages refreshed instead
+of stacked) drawn in the foreground from `egui::Visuals` colors, with a Dismiss
+button. Every file, clipboard and history result now passes through one
+`report_*` helper that keeps the typed status record, logs the result, and adds
+a toast for failures; the status bar shows only the last successful result.
+`epsilon-app/src/logging.rs` writes `<app data>/logs/epsilon.log` using only
+`std`: one record per line with a UTC timestamp (a small civil-date conversion
+instead of a date crate), size-triggered rotation at 1 MiB into three numbered
+siblings, and a panic hook that logs message and source location before the
+default hook. Writes are best-effort and never panic; a missing storage
+directory simply leaves logging disabled.
+
+**Consequences.** Error presentation no longer depends on status-bar width and
+a single place classifies failures. The log adds no dependency and no network
+path, stays under the app data directory with bounded size, and is not written
+by tests because `main` is what initialises it. A future structured logger can
+replace the module internals without changing call sites. The toast appearance
+and dismiss interaction are only covered headlessly; a live note-window review
+remains manual.

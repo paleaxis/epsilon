@@ -4,6 +4,18 @@ Notable changes, newest first. Version sections are added at release time.
 
 ## [Unreleased]
 
+### Added — 2026-11-27 (task 7.1)
+
+- Unified non-blocking error surface: file, clipboard and history failures now
+  appear as dismissible, auto-expiring toasts (errors 12 s, warnings 8 s) in the
+  top-right corner instead of clipped status-bar text, deduped and capped at four.
+- Status bar keeps only the last successful file/clipboard result.
+- Local plain-text diagnostic log at `<app data>/logs/epsilon.log` with 1 MiB
+  size rotation and three retained siblings, dependency-free UTC timestamps,
+  session start, file/import/export paths, and a panic hook that records message
+  and source location. No telemetry, no network.
+- File operation failures now name the full path in both the toast and the log.
+
 ### Added — 2026-11-27 (task 6.5)
 
 - File → Copy as Image copies the selection, or the whole canvas when nothing

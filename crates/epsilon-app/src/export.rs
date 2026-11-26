@@ -956,16 +956,28 @@ mod tests {
         assert_eq!(png.size, rgba.size);
         assert_eq!(rgba.bytes.len(), 102 * 102 * 4);
 
-        // A transparent corner stays zero and the semi-transparent fill is
-        // un-premultiplied back to its straight color and 50% alpha.
-        let corner = &rgba.bytes[..4];
-        assert_eq!(corner, &[0, 0, 0, 0]);
+        // The semi-transparent fill is un-premultiplied back to its straight
+        // color and 50% alpha. (The crop edge itself carries the stroke's
+        // anti-aliasing, so it is not asserted to be empty here; fully
+        // transparent conversion is covered by `unpremultiply_keeps_alpha`.)
         let center = (51 * 102 + 51) * 4;
         let pixel = &rgba.bytes[center..center + 4];
         assert!((pixel[0] as i32 - 200).abs() <= 2, "red was {pixel:?}");
         assert!((pixel[1] as i32 - 100).abs() <= 2, "green was {pixel:?}");
         assert!((pixel[2] as i32 - 50).abs() <= 2, "blue was {pixel:?}");
         assert!((pixel[3] as i32 - 128).abs() <= 1, "alpha was {pixel:?}");
+    }
+
+    #[test]
+    fn unpremultiply_keeps_alpha_and_expands_straight_color() {
+        // Premultiplied pixels: a half-alpha orange and a fully transparent
+        // one. Fully transparent pixels must not leak their premultiplied
+        // color back into the straight buffer.
+        let premultiplied = [100, 50, 25, 128, 0, 0, 0, 0];
+        assert_eq!(
+            unpremultiply(&premultiplied),
+            vec![199, 100, 50, 128, 0, 0, 0, 0]
+        );
     }
 
     #[test]

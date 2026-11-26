@@ -832,13 +832,25 @@ items in `PROJECT_STATE.md`.
 
 ## Stage 7 — Desktop readiness
 
-### [ ] 7.1 — Error handling and logging pass
+### [x] 7.1 — Error handling and logging pass
 
 Unified user-facing error surface (non-blocking toasts/banner), persistent local
 log file with rotation, no panic on recoverable errors.
 
 Acceptance: forced failure scenarios show actionable messages; logs contain
 context; no telemetry.
+
+Completed 2026-11-27: `crates/epsilon-app/src/notices.rs` owns one toast stack
+for errors and warnings (auto-expiring, dismissible, bounded at four, deduped)
+rendered in the foreground from theme visuals; file, clipboard and history
+failures all route through a single reporting helper, and the status bar now
+carries only the last successful result. `crates/epsilon-app/src/logging.rs`
+writes a plain-text local log under `<app data>/logs/epsilon.log` at 1 MiB with
+three rotated siblings, using only `std` (UTC timestamps, newline sanitising),
+and a panic hook records the message and location before the default hook runs.
+No telemetry or network code exists; production code has no `unwrap`/`expect` on
+user input or file contents. Forced save/open failures produce actionable
+messages and log entries; success paths log written/read paths.
 
 ### [ ] 7.2 — Icon, desktop entry, file associations
 

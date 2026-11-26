@@ -1,9 +1,9 @@
 # Project State
 
 Last updated: 2026-11-27
-Current stage: **Stage 7 — Desktop readiness** (Stage 6 complete)
-Last completed task: **6.5 — Clipboard image export**
-Next task: **7.1 — Error handling and logging pass**
+Current stage: **Stage 7 — Desktop readiness** (Stage 6 complete; 7.1 done)
+Last completed task: **7.1 — Error handling and logging pass**
+Next task: **7.2 — Icon, desktop entry, file associations**
 
 ## Status
 
@@ -60,8 +60,10 @@ an explicit overwrite confirmation. Selection exports are cropped to the
 selected elements only. File → Copy as Image places the selection (or the whole
 canvas when nothing is selected) on the system clipboard as a PNG through
 `arboard`, using the Wayland data-control protocol when available and X11
-otherwise; render and clipboard failures are reported in the status bar. Stage 6
-is complete.
+otherwise. Every failure now lands on one non-blocking toast surface (errors
+and warnings, dismissible and auto-expiring) and in a rotating local log file,
+while the status bar keeps only the last successful result. Stage 6 is
+complete; Stage 7 desktop readiness has started.
 
 Repository layout:
 
@@ -89,6 +91,8 @@ crates/epsilon-app/         eframe desktop shell
   src/tools.rs              Tool enum, shortcuts, painted icons, tool buttons
   src/export.rs             deterministic PNG/RGBA rasterizer + 7 tests
   src/clipboard_image.rs    system clipboard image copy + 2 tests
+  src/logging.rs            rotating plain-text local log + panic hook + 4 tests
+  src/notices.rs            non-blocking error/warning toast surface + 5 tests
   src/svg.rs                deterministic SVG exporter + 4 tests
   src/app.rs                EpsilonApp, menus, toolbar, tool state, history wiring, settings
 ```
@@ -104,7 +108,7 @@ Working UI actions:
 | Top toolbar | Wordmark, document title, undo/redo buttons, zoom buttons, theme checkbox, About button, version |
 | Canvas | Shape tools draw; Select picks/toggles/marquees, moves, resizes and rotates; text overlays edit in place; middle/space/hand drag pans; wheel zooms; right-click targets and opens a context menu |
 | Properties | Live transform/style editor with mixed values; panel hide control |
-| Status bar | Tool, pointer, zoom, grid, undo/redo depths, history/clipboard feedback, version |
+| Status bar | Tool, pointer, zoom, grid, undo/redo depths, last successful file/clipboard result, version |
 
 Only working actions are listed; Edit exposes undo, redo, cut, copy, paste,
 select all, duplicate, delete and the four z-order moves; the canvas context
@@ -153,9 +157,19 @@ Other shell behavior:
   canvas when nothing is selected, through the cropped PNG pipeline at 1× with
   the document background and writes `image/png` to the system clipboard via
   `arboard` (Wayland data-control preferred, X11 fallback). Empty scenes,
-  oversized images and unavailable clipboard backends are reported in the
-  status bar; nothing is written to disk. Clipboard ownership lasts while the
-  app runs.
+  oversized images and unavailable clipboard backends are reported as toasts;
+  nothing is written to disk. Clipboard ownership lasts while the app runs.
+- Errors and warnings: every file, clipboard and history failure is routed
+  through one reporting helper that logs the event and pushes a toast in the
+  top-right corner (errors 12 s, warnings 8 s, dismissible, at most four,
+  duplicates refreshed). File failures name the full path. The status bar shows
+  only the last successful file/clipboard message. No modal error dialogs are
+  used for recoverable failures.
+- Local log: `main` installs a panic hook and a rotating plain-text log at
+  `<app data>/logs/epsilon.log` (1 MiB cap, three numbered siblings). Records
+  include a UTC timestamp, level, scope and message; the session start and each
+  written/read document or export path are logged. No telemetry and no network
+  access; writing failures are ignored so the editor keeps working.
 - Export dialog: File → Export… chooses selection (disabled with no selection)
   or entire canvas, PNG/SVG, 1×/2×/4×/custom scale, document/transparent
   background and filename. The extension follows the chosen format; exporting
@@ -179,29 +193,33 @@ Other shell behavior:
   `Context::egui_wants_keyboard_input()`; `cc.storage` is a field.
 - Remote: `origin git@github.com/paleaxis/epsilon.git`, branch `main`.
 
-## Verified commands and results (task 6.5)
+## Verified commands and results (task 7.1)
 
 | Command | Result |
 | --- | --- |
 | `cargo fmt --all -- --check` | exit 0 |
 | `cargo clippy --workspace --all-targets -- -D warnings` | exit 0 |
-| `cargo test --workspace` | **247 passed, 0 failed** (129 app, 113 core, 5 compat) |
+| `cargo test --workspace` | **258 passed, 0 failed** (140 app, 113 core, 5 compat) |
 | `cargo build --workspace` | success, no warnings |
 | `timeout 8 ./target/debug/epsilon` | exit 124 (alive, no stderr) |
 
-Task 6.5 adds File → Copy as Image. New tests render a semi-transparent fill to
-straight RGBA and check dimensions, zero-alpha corners and recovered color/alpha
-(non-premultiplied), and verify that an empty document and an empty selection
-fail with "nothing to export" before any clipboard access. The clipboard module
-also tests its error text. The real system clipboard, menu click and external
-paste were not exercised here: the suite never overwrites the user's clipboard.
-The environment has both `WAYLAND_DISPLAY=wayland-1` and `DISPLAY=:1`, so
-`arboard` can prefer data-control and fall back to X11; `wayland-info` is not
-installed, so protocol exposure was not independently listed. Earlier task 6.4
-tests (selection PNG/SVG crops, scale, overwrite and cancel safety) still pass.
-The SVG visual comparison, export-dialog interaction and Excalidraw real-app
-checks remain pending manual items. Images/`files`, frames, bindings and
-arrowhead variants are not fully mapped.
+Task 7.1 adds the rotating log and the toast surface. Tests cover UTC timestamp
+formatting (epoch, leap day), newline sanitising, record content, size-triggered
+rotation with bounded siblings, toast dedupe/cap/expiry, a headless toast
+render, and the app wiring: a forced save failure produces exactly one toast and
+a successful save none. The native launch wrote
+`<app data>/logs/epsilon.log` with a session-start record; the file grew across
+launches. Production code has no `unwrap`/`expect` outside tests (grep-checked).
+One pre-existing flaky assertion surfaced while running the suite repeatedly:
+the task 6.5 RGBA test required the crop-corner pixel to be exactly transparent,
+but the crop edge clips the stroke's anti-aliasing and the value depends on the
+seeded rough stroke. The corner assertion was replaced by a deterministic
+`unpremultiply` unit test, and the RGBA test now checks dimensions and straight
+color/alpha; repeated full-suite and single-test runs pass. The live toast
+appearance, dismiss button and panic-log path were not clicked or forced in a
+visible window (see the 7.1 manual checklist). Earlier pending manual items
+(SVG visual comparison, export dialog interaction, clipboard external paste,
+Excalidraw real-app import) remain unchanged.
 
 ## Features implemented
 
@@ -287,8 +305,14 @@ arrowhead variants are not fully mapped.
   confirmation and surfaced validation errors.
 - Clipboard image export from File → Copy as Image: selection or whole canvas
   as a cropped 1× PNG with the document background, straight-alpha RGBA and
-  `arboard` transfer (Wayland data-control preferred, X11 fallback), with
-  status-bar failures.
+  `arboard` transfer (Wayland data-control preferred, X11 fallback), with toast
+  failures and full-path log context.
+- Unified error surface: file, clipboard and history failures become
+  dismissible, auto-expiring toasts; duplicates are refreshed, the stack is
+  bounded and the status bar only shows successful results.
+- Rotating local diagnostic log (`<app data>/logs/epsilon.log`, 1 MiB, three
+  siblings) with UTC timestamps, session/file-path records and a panic hook;
+  no telemetry or network access.
 - Selection-only PNG and SVG exports cropped to the selected world bounds.
 - PNG export with scene-bounds cropping, 1x/2x/4x/custom scale, optional
 transparent background, deterministic element rasterization (rough strokes,
@@ -419,6 +443,31 @@ overwrite the user's clipboard:
 
 Status: **pending** — not performed in this environment.
 
+## Manual acceptance checklist — error surface and log (task 7.1)
+
+Automated tests cover toast dedupe, capacity, expiry, headless rendering, the
+save-failure wiring, log records, timestamp formatting and rotation. The live
+window and an actual panic were not exercised:
+
+- [ ] Launch, draw a shape, then attempt a save whose parent path is a file and
+  confirm a top-right Error toast names the full path, the × button dismisses
+  it, and the status bar keeps only successful results.
+- [ ] Trigger five different failures and confirm at most four toasts show;
+  repeat one failure while its toast is visible and confirm it refreshes rather
+  than stacking.
+- [ ] Leave an error toast alone and confirm it disappears after about 12 s, and
+  a warning after about 8 s.
+- [ ] Copy unrelated text in another application and press Ctrl+V in Epsilon and
+  confirm the "Clipboard has no Epsilon elements" warning toast.
+- [ ] Inspect `<app data>/logs/epsilon.log` and confirm session-start, read/write
+  path and failure records, with UTC timestamps and full paths on errors.
+- [ ] Exceed 1 MiB of log entries and confirm `epsilon.log.1` … `.3` rotate and
+  the current file starts fresh.
+- [ ] Panic in a debug build and confirm stderr still shows the panic and the
+  log gains an `[ERROR] panic` record with location.
+
+Status: **pending** — not performed in this environment.
+
 ## Known issues / limitations
 
 - Edit contains Undo/Redo, Cut/Copy/Paste, Select All, Duplicate, Delete, Group,
@@ -459,6 +508,12 @@ Status: **pending** — not performed in this environment.
   serialization envelope exists, with save/open arriving in task 5.2. While the
   canvas text editor is open, its own TextEdit undo applies instead of document
   history.
+- Error toasts and the log were verified by unit tests, a headless render and a
+  native launch that wrote a session record; a human has not seen a toast, used
+  its dismiss button, or forced a panic. Toasts auto-dismiss by design, so a
+  missed error is also available in `<app data>/logs/epsilon.log`. There is no
+  in-app log viewer or configurable log level/retention beyond the constants in
+  `logging.rs`.
 - No CI; local verification only. No visual/screenshot review performed.
 - Window/panel restore relies on eframe/egui and was not re-measured under niri.
 - Project license: GPL-3.0 (`LICENSE`); manifests declare `GPL-3.0-only`.
@@ -467,7 +522,8 @@ Status: **pending** — not performed in this environment.
 
 1. Read `AGENTS.md`, `project/ROADMAP.md`, this file, `project/DECISIONS.md`.
 2. `git status` must be clean; run `cargo test --workspace` for the baseline.
-3. Start with the first incomplete task, 7.1 — Error handling and logging pass.
+3. Start with the first incomplete task, 7.2 — Icon, desktop entry and file
+   associations.
 4. Verify format, clippy, tests, build, and `timeout 8 ./target/debug/epsilon`.
 5. Update this file, `ROADMAP.md`, `CHANGELOG.md`, then commit and push.
 

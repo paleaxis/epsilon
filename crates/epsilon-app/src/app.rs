@@ -23,6 +23,8 @@ use epsilon_core::recovery::{RECOVERY_SOURCE_KEY, RecoveryStore};
 use epsilon_core::viewport::Viewport;
 
 use crate::layout;
+use crate::logging;
+use crate::notices::Notices;
 use crate::theme::{self, Theme};
 use crate::tools::{self, Tool};
 
@@ -732,8 +734,8 @@ pub struct EpsilonApp {
     last_window_title: String,
     /// Reversible edit history for the document.
     history: History,
-    /// Last failed history operation, shown in the status bar.
-    history_error: Option<String>,
+    /// Unified non-blocking error/warning surface drawn over the canvas.
+    notices: Notices,
     /// Last copied or cut selection. Menu paste uses this in-app payload;
     /// Ctrl+V reads the platform clipboard text instead.
     clipboard: Option<ClipboardPayload>,
@@ -817,7 +819,7 @@ impl Default for EpsilonApp {
             welcome_open: true,
             last_window_title: String::new(),
             history: History::default(),
-            history_error: None,
+            notices: Notices::default(),
             clipboard: None,
             paste_count: 0,
             clipboard_feedback: None,
@@ -1206,6 +1208,45 @@ impl EpsilonApp {
         app
     }
 
+    /// Records a file operation result: every result reaches the log, and
+    /// failures also become a toast so a clipped status bar cannot hide them.
+    fn report_file(&mut self, feedback: FileFeedback) {
+        match &feedback {
+            FileFeedback::Error(message) => {
+                logging::error("file", message);
+                self.notices.error(message.clone());
+            }
+            FileFeedback::New(message)
+            | FileFeedback::Saved(message)
+            | FileFeedback::Opened(message)
+            | FileFeedback::Recovered(message) => logging::info("file", message),
+        }
+        self.file_feedback = Some(feedback);
+    }
+
+    fn report_clipboard(&mut self, feedback: ClipboardFeedback) {
+        match &feedback {
+            ClipboardFeedback::Error(message) => {
+                logging::error("clipboard", message);
+                self.notices.error(message.clone());
+            }
+            ClipboardFeedback::Unsupported => {
+                let message = feedback.message();
+                logging::warn("clipboard", &message);
+                self.notices.warning(message);
+            }
+            ClipboardFeedback::Copied(_)
+            | ClipboardFeedback::Cut(_)
+            | ClipboardFeedback::Pasted(_) => logging::info("clipboard", &feedback.message()),
+        }
+        self.clipboard_feedback = Some(feedback);
+    }
+
+    fn report_history_error(&mut self, message: String) {
+        logging::error("history", &message);
+        self.notices.error(message);
+    }
+
     fn set_theme(&mut self, ctx: &egui::Context, theme: Theme) {
         if self.theme != theme {
             self.theme = theme;
@@ -1270,8 +1311,7 @@ impl EpsilonApp {
         let json = match payload.to_json() {
             Ok(json) => json,
             Err(error) => {
-                self.clipboard_feedback =
-                    Some(ClipboardFeedback::Error(format!("Copy failed: {error}")));
+                self.report_clipboard(ClipboardFeedback::Error(format!("Copy failed: {error}")));
                 return false;
             }
         };
@@ -1279,7 +1319,7 @@ impl EpsilonApp {
         ctx.copy_text(json);
         self.clipboard = Some(payload);
         self.paste_count = 0;
-        self.clipboard_feedback = Some(ClipboardFeedback::Copied(count));
+        self.report_clipboard(ClipboardFeedback::Copied(count));
         true
     }
 
@@ -1304,7 +1344,7 @@ impl EpsilonApp {
                 }
             }
             Err(error) => {
-                self.history_error = Some(format!("Edit failed: {error}"));
+                self.report_history_error(format!("Edit failed: {error}"));
                 false
             }
         }
@@ -1322,7 +1362,7 @@ impl EpsilonApp {
         if !self.delete_selection() {
             return false;
         }
-        self.clipboard_feedback = Some(ClipboardFeedback::Cut(count));
+        self.report_clipboard(ClipboardFeedback::Cut(count));
         true
     }
 
@@ -1330,7 +1370,7 @@ impl EpsilonApp {
     /// them, and makes the payload the one the Edit menu pastes next.
     fn paste_payload(&mut self, payload: ClipboardPayload) -> bool {
         if self.history_blocked() || !payload.is_supported() {
-            self.clipboard_feedback = Some(ClipboardFeedback::Unsupported);
+            self.report_clipboard(ClipboardFeedback::Unsupported);
             return false;
         }
         // Every paste is offset so it never hides exactly under the source;
@@ -1338,7 +1378,7 @@ impl EpsilonApp {
         let step = PASTE_OFFSET * f64::from(self.paste_count + 1);
         let elements = payload.paste_elements(&self.document, Point::new(step, step));
         if elements.is_empty() {
-            self.clipboard_feedback = Some(ClipboardFeedback::Unsupported);
+            self.report_clipboard(ClipboardFeedback::Unsupported);
             return false;
         }
         let count = elements.len();
@@ -1350,7 +1390,7 @@ impl EpsilonApp {
         self.selected = ids.into_iter().collect();
         self.clipboard = Some(payload);
         self.paste_count = self.paste_count.saturating_add(1);
-        self.clipboard_feedback = Some(ClipboardFeedback::Pasted(count));
+        self.report_clipboard(ClipboardFeedback::Pasted(count));
         true
     }
 
@@ -1360,7 +1400,7 @@ impl EpsilonApp {
         match ClipboardPayload::from_json(text) {
             Ok(payload) if payload.is_supported() => self.paste_payload(payload),
             Ok(_) | Err(_) => {
-                self.clipboard_feedback = Some(ClipboardFeedback::Unsupported);
+                self.report_clipboard(ClipboardFeedback::Unsupported);
                 false
             }
         }
@@ -1490,7 +1530,7 @@ impl EpsilonApp {
             }
             Ok(None) => false,
             Err(error) => {
-                self.file_feedback = Some(FileFeedback::Error(format!(
+                self.report_file(FileFeedback::Error(format!(
                     "Recovery unavailable: {error}"
                 )));
                 false
@@ -1520,7 +1560,7 @@ impl EpsilonApp {
             }
             Err(error) => {
                 self.last_autosave = Instant::now();
-                self.file_feedback = Some(FileFeedback::Error(format!("Autosave failed: {error}")));
+                self.report_file(FileFeedback::Error(format!("Autosave failed: {error}")));
                 false
             }
         }
@@ -1530,7 +1570,7 @@ impl EpsilonApp {
         if let Some(store) = &self.recovery_store
             && let Err(error) = store.discard_all()
         {
-            self.file_feedback = Some(FileFeedback::Error(format!(
+            self.report_file(FileFeedback::Error(format!(
                 "Could not remove recovery files: {error}"
             )));
         }
@@ -1553,7 +1593,6 @@ impl EpsilonApp {
         self.viewport = file.app_state.viewport;
         self.viewport.set_zoom(self.viewport.zoom);
         self.history.clear();
-        self.history_error = None;
         self.property_edit_before = None;
         self.pointer_mode = PointerMode::Idle;
         self.transform_original.clear();
@@ -1567,7 +1606,7 @@ impl EpsilonApp {
         // The recovered scene was not necessarily the last saved state, so it
         // starts dirty and prompts before overwriting any source file.
         self.saved_document = Document::new();
-        self.file_feedback = Some(FileFeedback::Recovered("Recovered unsaved work".to_owned()));
+        self.report_file(FileFeedback::Recovered("Recovered unsaved work".to_owned()));
         self.discard_recovery_files();
     }
 
@@ -1597,7 +1636,7 @@ impl EpsilonApp {
         } else if discard {
             self.recovery_offer = None;
             self.discard_recovery_files();
-            self.file_feedback = Some(FileFeedback::New("Discarded recovered work".to_owned()));
+            self.report_file(FileFeedback::New("Discarded recovered work".to_owned()));
         }
     }
 
@@ -1617,11 +1656,15 @@ impl EpsilonApp {
                 self.recent.record(path.to_path_buf());
                 self.last_autosave = Instant::now();
                 self.discard_recovery_files();
-                self.file_feedback = Some(FileFeedback::Saved(format!("Saved {name}")));
+                logging::info("file", &format!("wrote {}", path.display()));
+                self.report_file(FileFeedback::Saved(format!("Saved {name}")));
                 true
             }
             Err(error) => {
-                self.file_feedback = Some(FileFeedback::Error(format!("Save failed: {error}")));
+                self.report_file(FileFeedback::Error(format!(
+                    "Save failed for {}: {error}",
+                    path.display()
+                )));
                 false
             }
         }
@@ -1641,7 +1684,6 @@ impl EpsilonApp {
                 self.viewport = file.app_state.viewport;
                 self.viewport.set_zoom(self.viewport.zoom);
                 self.history.clear();
-                self.history_error = None;
                 self.property_edit_before = None;
                 self.pointer_mode = PointerMode::Idle;
                 self.transform_original.clear();
@@ -1656,11 +1698,15 @@ impl EpsilonApp {
                 self.recent.record(path.to_path_buf());
                 self.last_autosave = Instant::now();
                 self.discard_recovery_files();
-                self.file_feedback = Some(FileFeedback::Opened(format!("Opened {name}")));
+                logging::info("file", &format!("read {}", path.display()));
+                self.report_file(FileFeedback::Opened(format!("Opened {name}")));
                 true
             }
             Err(error) => {
-                self.file_feedback = Some(FileFeedback::Error(format!("Open failed: {error}")));
+                self.report_file(FileFeedback::Error(format!(
+                    "Open failed for {}: {error}",
+                    path.display()
+                )));
                 false
             }
         }
@@ -1678,7 +1724,7 @@ impl EpsilonApp {
 
     fn request_new_document(&mut self) {
         if self.history_blocked() {
-            self.file_feedback = Some(FileFeedback::Error(
+            self.report_file(FileFeedback::Error(
                 "Finish the current edit before starting a new document".to_owned(),
             ));
             return;
@@ -1696,7 +1742,6 @@ impl EpsilonApp {
         self.saved_document = self.document.clone();
         self.viewport = Viewport::default();
         self.history.clear();
-        self.history_error = None;
         self.property_edit_before = None;
         self.pointer_mode = PointerMode::Idle;
         self.transform_original.clear();
@@ -1710,7 +1755,7 @@ impl EpsilonApp {
         self.pending_action = None;
         self.last_autosave = Instant::now();
         self.discard_recovery_files();
-        self.file_feedback = Some(FileFeedback::New("New document".to_owned()));
+        self.report_file(FileFeedback::New("New document".to_owned()));
     }
 
     /// Imports an Excalidraw scene as a new unsaved document. Unsupported
@@ -1728,7 +1773,6 @@ impl EpsilonApp {
                 self.viewport = imported.viewport;
                 self.viewport.set_zoom(self.viewport.zoom);
                 self.history.clear();
-                self.history_error = None;
                 self.property_edit_before = None;
                 self.pointer_mode = PointerMode::Idle;
                 self.transform_original.clear();
@@ -1742,7 +1786,17 @@ impl EpsilonApp {
                 self.saved_document = Document::new();
                 self.last_autosave = Instant::now();
                 self.discard_recovery_files();
-                self.file_feedback = Some(FileFeedback::New(if skipped == 0 {
+                logging::info("import", &format!("read {}", path.display()));
+                if skipped > 0 {
+                    logging::warn(
+                        "import",
+                        &format!(
+                            "{skipped} unsupported elements skipped in {}",
+                            path.display()
+                        ),
+                    );
+                }
+                self.report_file(FileFeedback::New(if skipped == 0 {
                     format!("Imported {count} elements from {name}")
                 } else {
                     format!("Imported {count} elements from {name} ({skipped} unsupported skipped)")
@@ -1750,7 +1804,10 @@ impl EpsilonApp {
                 true
             }
             Err(error) => {
-                self.file_feedback = Some(FileFeedback::Error(format!("Import failed: {error}")));
+                self.report_file(FileFeedback::Error(format!(
+                    "Import failed for {}: {error}",
+                    path.display()
+                )));
                 false
             }
         }
@@ -1758,7 +1815,7 @@ impl EpsilonApp {
 
     fn request_import_excalidraw(&mut self) {
         if self.history_blocked() {
-            self.file_feedback = Some(FileFeedback::Error(
+            self.report_file(FileFeedback::Error(
                 "Finish the current edit before importing a file".to_owned(),
             ));
             return;
@@ -1784,11 +1841,15 @@ impl EpsilonApp {
             .unwrap_or_else(|| path.display().to_string());
         match excalidraw::export_to_path(&self.document, &self.viewport, path) {
             Ok(()) => {
-                self.file_feedback = Some(FileFeedback::Saved(format!("Exported {name}")));
+                logging::info("export", &format!("wrote {}", path.display()));
+                self.report_file(FileFeedback::Saved(format!("Exported {name}")));
                 true
             }
             Err(error) => {
-                self.file_feedback = Some(FileFeedback::Error(format!("Export failed: {error}")));
+                self.report_file(FileFeedback::Error(format!(
+                    "Export failed for {}: {error}",
+                    path.display()
+                )));
                 false
             }
         }
@@ -1796,7 +1857,7 @@ impl EpsilonApp {
 
     fn export_excalidraw_dialog(&mut self) {
         if self.history_blocked() {
-            self.file_feedback = Some(FileFeedback::Error(
+            self.report_file(FileFeedback::Error(
                 "Finish the current edit before exporting".to_owned(),
             ));
             return;
@@ -1842,20 +1903,27 @@ impl EpsilonApp {
         let rendered = match crate::export::render_png(document, options) {
             Ok(rendered) => rendered,
             Err(error) => {
-                self.file_feedback = Some(FileFeedback::Error(format!("Export failed: {error}")));
+                self.report_file(FileFeedback::Error(format!(
+                    "Export failed for {}: {error}",
+                    path.display()
+                )));
                 return false;
             }
         };
         match write_bytes_atomically(path, &rendered.bytes) {
             Ok(()) => {
-                self.file_feedback = Some(FileFeedback::Saved(format!(
+                logging::info("export", &format!("wrote {}", path.display()));
+                self.report_file(FileFeedback::Saved(format!(
                     "Exported {name} ({}×{})",
                     rendered.size.width, rendered.size.height
                 )));
                 true
             }
             Err(error) => {
-                self.file_feedback = Some(FileFeedback::Error(format!("Export failed: {error}")));
+                self.report_file(FileFeedback::Error(format!(
+                    "Export failed for {}: {error}",
+                    path.display()
+                )));
                 false
             }
         }
@@ -1919,7 +1987,7 @@ impl EpsilonApp {
 
     fn export_png_dialog(&mut self) {
         if self.history_blocked() {
-            self.file_feedback = Some(FileFeedback::Error(
+            self.report_file(FileFeedback::Error(
                 "Finish the current edit before exporting".to_owned(),
             ));
             return;
@@ -1965,17 +2033,23 @@ impl EpsilonApp {
         match crate::svg::export_svg(document, options) {
             Ok(svg) => match write_bytes_atomically(path, svg.as_bytes()) {
                 Ok(()) => {
-                    self.file_feedback = Some(FileFeedback::Saved(format!("Exported {name}")));
+                    logging::info("export", &format!("wrote {}", path.display()));
+                    self.report_file(FileFeedback::Saved(format!("Exported {name}")));
                     true
                 }
                 Err(error) => {
-                    self.file_feedback =
-                        Some(FileFeedback::Error(format!("Export failed: {error}")));
+                    self.report_file(FileFeedback::Error(format!(
+                        "Export failed for {}: {error}",
+                        path.display()
+                    )));
                     false
                 }
             },
             Err(error) => {
-                self.file_feedback = Some(FileFeedback::Error(format!("Export failed: {error}")));
+                self.report_file(FileFeedback::Error(format!(
+                    "Export failed for {}: {error}",
+                    path.display()
+                )));
                 false
             }
         }
@@ -2026,7 +2100,7 @@ impl EpsilonApp {
     /// the system clipboard as a PNG image (task 6.5).
     fn copy_as_image(&mut self) -> bool {
         if self.history_blocked() {
-            self.file_feedback = Some(FileFeedback::Error(
+            self.report_file(FileFeedback::Error(
                 "Finish the current edit before copying an image".to_owned(),
             ));
             return false;
@@ -2053,15 +2127,14 @@ impl EpsilonApp {
                     ExportScope::Document => "canvas",
                     ExportScope::Selection => "selection",
                 };
-                self.file_feedback = Some(FileFeedback::Saved(format!(
+                self.report_file(FileFeedback::Saved(format!(
                     "Copied {what} as image ({}×{})",
                     size.width, size.height
                 )));
                 true
             }
             Err(error) => {
-                self.file_feedback =
-                    Some(FileFeedback::Error(format!("Copy image failed: {error}")));
+                self.report_file(FileFeedback::Error(format!("Copy image failed: {error}")));
                 false
             }
         }
@@ -2088,7 +2161,7 @@ impl EpsilonApp {
 
     fn export_svg_dialog(&mut self) {
         if self.history_blocked() {
-            self.file_feedback = Some(FileFeedback::Error(
+            self.report_file(FileFeedback::Error(
                 "Finish the current edit before exporting".to_owned(),
             ));
             return;
@@ -2108,7 +2181,7 @@ impl EpsilonApp {
 
     fn export_dialog(&mut self) {
         if self.history_blocked() {
-            self.file_feedback = Some(FileFeedback::Error(
+            self.report_file(FileFeedback::Error(
                 "Finish the current edit before exporting".to_owned(),
             ));
             return;
@@ -2183,7 +2256,7 @@ impl EpsilonApp {
             && factor == 1.0
             && self.export_custom_scale.trim().parse::<f32>().is_err()
         {
-            self.file_feedback = Some(FileFeedback::Error(
+            self.report_file(FileFeedback::Error(
                 "Custom export scale must be a number".to_owned(),
             ));
             return false;
@@ -2326,7 +2399,7 @@ impl EpsilonApp {
 
     fn request_open_document(&mut self) {
         if self.history_blocked() {
-            self.file_feedback = Some(FileFeedback::Error(
+            self.report_file(FileFeedback::Error(
                 "Finish the current edit before opening a file".to_owned(),
             ));
             return;
@@ -2342,14 +2415,14 @@ impl EpsilonApp {
     /// removed and reported instead of attempting a read.
     fn open_recent(&mut self, path: &Path) {
         if self.history_blocked() {
-            self.file_feedback = Some(FileFeedback::Error(
+            self.report_file(FileFeedback::Error(
                 "Finish the current edit before opening a file".to_owned(),
             ));
             return;
         }
         if !path.is_file() {
             self.recent.remove(path);
-            self.file_feedback = Some(FileFeedback::Error(format!(
+            self.report_file(FileFeedback::Error(format!(
                 "File no longer exists: {}",
                 path.display()
             )));
@@ -2375,7 +2448,7 @@ impl EpsilonApp {
 
     fn save_document(&mut self) -> bool {
         if self.history_blocked() {
-            self.file_feedback = Some(FileFeedback::Error(
+            self.report_file(FileFeedback::Error(
                 "Finish the current edit before saving".to_owned(),
             ));
             return false;
@@ -2388,7 +2461,7 @@ impl EpsilonApp {
 
     fn save_document_as(&mut self) -> bool {
         if self.history_blocked() {
-            self.file_feedback = Some(FileFeedback::Error(
+            self.report_file(FileFeedback::Error(
                 "Finish the current edit before saving".to_owned(),
             ));
             return false;
@@ -2625,7 +2698,7 @@ impl EpsilonApp {
         match Transaction::replace(before, after) {
             Ok(transaction) => self.commit_transaction(transaction),
             Err(error) => {
-                self.history_error = Some(format!("Edit failed: {error}"));
+                self.report_history_error(format!("Edit failed: {error}"));
                 false
             }
         }
@@ -2647,7 +2720,7 @@ impl EpsilonApp {
         match Transaction::replace(before, after) {
             Ok(transaction) => self.commit_transaction(transaction),
             Err(error) => {
-                self.history_error = Some(format!("Edit failed: {error}"));
+                self.report_history_error(format!("Edit failed: {error}"));
                 false
             }
         }
@@ -2667,7 +2740,7 @@ impl EpsilonApp {
         match Transaction::replace(before, after) {
             Ok(transaction) => self.commit_transaction(transaction),
             Err(error) => {
-                self.history_error = Some(format!("Edit failed: {error}"));
+                self.report_history_error(format!("Edit failed: {error}"));
                 false
             }
         }
@@ -2687,7 +2760,7 @@ impl EpsilonApp {
         match Transaction::replace(before, after) {
             Ok(transaction) => self.commit_transaction(transaction),
             Err(error) => {
-                self.history_error = Some(format!("Edit failed: {error}"));
+                self.report_history_error(format!("Edit failed: {error}"));
                 false
             }
         }
@@ -2723,7 +2796,7 @@ impl EpsilonApp {
         match Transaction::replace(before, after) {
             Ok(transaction) => self.commit_transaction(transaction),
             Err(error) => {
-                self.history_error = Some(format!("Edit failed: {error}"));
+                self.report_history_error(format!("Edit failed: {error}"));
                 false
             }
         }
@@ -2731,12 +2804,9 @@ impl EpsilonApp {
 
     fn commit_transaction(&mut self, transaction: Transaction) -> bool {
         match self.history.commit(&mut self.document, transaction) {
-            Ok(()) => {
-                self.history_error = None;
-                true
-            }
+            Ok(()) => true,
             Err(error) => {
-                self.history_error = Some(format!("Edit failed: {error}"));
+                self.report_history_error(format!("Edit failed: {error}"));
                 false
             }
         }
@@ -2767,13 +2837,12 @@ impl EpsilonApp {
         match self.history.undo(&mut self.document) {
             Ok(changed) => {
                 if changed {
-                    self.history_error = None;
                     self.prune_after_history();
                 }
                 changed
             }
             Err(error) => {
-                self.history_error = Some(format!("Undo failed: {error}"));
+                self.report_history_error(format!("Undo failed: {error}"));
                 false
             }
         }
@@ -2786,13 +2855,12 @@ impl EpsilonApp {
         match self.history.redo(&mut self.document) {
             Ok(changed) => {
                 if changed {
-                    self.history_error = None;
                     self.prune_after_history();
                 }
                 changed
             }
             Err(error) => {
-                self.history_error = Some(format!("Redo failed: {error}"));
+                self.report_history_error(format!("Redo failed: {error}"));
                 false
             }
         }
@@ -2838,7 +2906,7 @@ impl EpsilonApp {
             Ok(transaction) => {
                 self.commit_transaction(transaction);
             }
-            Err(error) => self.history_error = Some(format!("Edit failed: {error}")),
+            Err(error) => self.report_history_error(format!("Edit failed: {error}")),
         }
     }
 
@@ -2863,7 +2931,7 @@ impl EpsilonApp {
             Ok(transaction) => {
                 self.commit_transaction(transaction);
             }
-            Err(error) => self.history_error = Some(format!("Edit failed: {error}")),
+            Err(error) => self.report_history_error(format!("Edit failed: {error}")),
         }
     }
 
@@ -4399,7 +4467,7 @@ impl EpsilonApp {
             } else if let Ok(transaction) = Transaction::remove(&self.document, &[id]) {
                 self.commit_transaction(transaction);
             } else {
-                self.history_error = Some("Could not remove empty text".to_owned());
+                self.report_history_error("Could not remove empty text".to_owned());
             }
             return;
         }
@@ -4425,7 +4493,7 @@ impl EpsilonApp {
                 Ok(transaction) => {
                     self.commit_transaction(transaction);
                 }
-                Err(error) => self.history_error = Some(format!("Edit failed: {error}")),
+                Err(error) => self.report_history_error(format!("Edit failed: {error}")),
             }
         }
     }
@@ -4834,31 +4902,19 @@ impl EpsilonApp {
                         .small()
                         .weak(),
                     );
-                    if let Some(error) = &self.history_error {
+                    // Failures go to the toast surface above the canvas, so
+                    // the status bar only carries the last successful result.
+                    if let Some(feedback) = &self.clipboard_feedback
+                        && !feedback.is_error()
+                    {
                         ui.add_space(12.0);
-                        ui.label(
-                            RichText::new(error)
-                                .small()
-                                .color(ui.visuals().error_fg_color),
-                        );
+                        ui.label(RichText::new(feedback.message()).small().weak());
                     }
-                    if let Some(feedback) = &self.clipboard_feedback {
+                    if let Some(feedback) = &self.file_feedback
+                        && !feedback.is_error()
+                    {
                         ui.add_space(12.0);
-                        let text = RichText::new(feedback.message()).small();
-                        ui.label(if feedback.is_error() {
-                            text.color(ui.visuals().error_fg_color)
-                        } else {
-                            text.weak()
-                        });
-                    }
-                    if let Some(feedback) = &self.file_feedback {
-                        ui.add_space(12.0);
-                        let text = RichText::new(feedback.message()).small();
-                        ui.label(if feedback.is_error() {
-                            text.color(ui.visuals().error_fg_color)
-                        } else {
-                            text.weak()
-                        });
+                        ui.label(RichText::new(feedback.message()).small().weak());
                     }
                     ui.add_space(12.0);
                     let dirty = if self.is_dirty() { "•" } else { "" };
@@ -5128,6 +5184,7 @@ impl eframe::App for EpsilonApp {
         self.help_window(ui.ctx());
         self.run_export_dialog(ui.ctx());
         self.export_overwrite_window(ui.ctx());
+        self.notices.show(ui.ctx());
     }
 
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
@@ -6485,7 +6542,18 @@ mod tests {
             app.file_feedback,
             Some(FileFeedback::Error(ref message)) if message.contains("Save failed")
         ));
+        // The same failure must also reach the unified toast surface.
+        assert_eq!(app.notices.len(), 1);
 
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn successful_file_operations_do_not_raise_error_toasts() {
+        let dir = file_test_dir("notices-success");
+        let mut app = selection_app();
+        assert!(app.save_to_path(&dir.join("scene.epsilon")));
+        assert_eq!(app.notices.len(), 0);
         std::fs::remove_dir_all(&dir).ok();
     }
 
