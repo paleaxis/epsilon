@@ -4,6 +4,14 @@ Notable changes, newest first. Version sections are added at release time.
 
 ## [Unreleased]
 
+### Added — 2026-11-26 (task 4.9)
+
+- Distribute three or more selected elements horizontally or vertically with
+  equal gaps under Edit → Arrange, keeping the outer elements fixed.
+- Distribution is one undoable transaction, preserves the selection, and adds
+  no history when gaps are already even or fewer than three elements are
+  selected.
+
 ### Added — 2026-11-26 (task 4.8)
 
 - Align left/center/right and top/middle/bottom for two or more selected

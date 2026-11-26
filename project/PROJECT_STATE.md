@@ -2,8 +2,8 @@
 
 Last updated: 2026-11-26
 Current stage: **Stage 4 — Editing experience**
-Last completed task: **4.8 — Alignment**
-Next task: **4.9 — Distribution**
+Last completed task: **4.9 — Distribution** (Stage 4 complete)
+Next task: **5.1 — Native document format v1**
 
 ## Status
 
@@ -30,6 +30,8 @@ nesting level, and clicks, marquees, shift-toggles and right-click targeting
 select whole groups. Each group operation is one undo entry. Alignment moves
 two or more selected elements onto a shared left/center/right or
 top/middle/bottom edge using rotated world bounds, as one undo transaction.
+Distribution equalises gaps for three or more elements horizontally or
+vertically while keeping the outermost elements fixed.
 
 Repository layout:
 
@@ -40,7 +42,7 @@ README.md                   build/run overview
 project/                    STATE, ROADMAP, DECISIONS, CHANGELOG
 crates/epsilon-core/        UI-independent engine (no egui dependency)
   src/geometry.rs           Point, Rect, shapes, rough strokes + 29 tests
-  src/document.rs           schema-versioned document, shapes, text, styles, paint order, z-order moves, groups
+  src/document.rs           schema-versioned document, shapes, text, styles, paint order, groups, arrange operations
   src/history.rs            reversible commands, transactions, bounded undo/redo + 9 tests
   src/clipboard.rs          clipboard JSON payload, paste preparation, group-ID refresh + 7 tests
 crates/epsilon-app/         eframe desktop shell
@@ -124,29 +126,29 @@ Other shell behavior:
   `Context::egui_wants_keyboard_input()`; `cc.storage` is a field.
 - Remote: `origin git@github.com/paleaxis/epsilon.git`, branch `main`.
 
-## Verified commands and results (task 4.8)
+## Verified commands and results (task 4.9)
 
 | Command | Result |
 | --- | --- |
 | `cargo fmt --all -- --check` | exit 0 |
 | `cargo clippy --workspace --all-targets -- -D warnings` | exit 0 |
-| `cargo test --workspace` | **168 passed, 0 failed** (86 app, 82 core) |
+| `cargo test --workspace` | **171 passed, 0 failed** (87 app, 84 core) |
 | `cargo build --workspace` | success, no warnings |
 | `timeout 8 ./target/debug/epsilon` | exit 124 (alive, no stderr) |
 
-Task 4.8 adds core tests for every alignment edge, centre and middle using
-collective world bounds, a rotated element aligned by its axis-aligned extent,
-no-ops for fewer than two elements/unknown IDs/already-aligned selections, and
-app tests that alignment is one history transaction, preserves the selection,
-undoes exactly and records no entry for a no-op. The suite also retains task
-4.7 grouping tests, task 4.6 context-menu tests, task 4.5 z-order tests, task
-4.4 selection tests, task 4.3 clipboard tests, core history tests and all
-earlier shell, persistence, viewport, grid, document, styling, rough rendering
-and shape coverage.
+Task 4.9 adds core tests for equal-gap horizontal and vertical distribution
+with different sizes, overlapping elements, unchanged outermost elements,
+already-even selections, fewer than three elements and unknown IDs. App tests
+cover one history transaction, selection preservation, exact undo, no history
+for an already-distributed selection and the three-element gate. The suite also
+retains task 4.8 alignment tests, task 4.7 grouping tests, task 4.6 context-menu
+tests, task 4.5 z-order tests, task 4.4 selection tests, task 4.3 clipboard
+tests, core history tests and all earlier shell, persistence, viewport, grid,
+document, styling, rough rendering and shape coverage.
 
-Native launch was verified by process liveness. Alignment was exercised through
-core and app tests; interactive Edit → Arrange menu clicks were not manually
-inspected in a live window.
+Native launch was verified by process liveness. Alignment and distribution
+were exercised through core and app tests; interactive Edit → Arrange menu
+clicks were not manually inspected in a live window.
 
 ## Features implemented
 
@@ -198,6 +200,8 @@ inspected in a live window.
   operation and fresh group IDs on paste/duplicate.
 - Align left/center/right and top/middle/bottom from Edit → Arrange for two or
   more selected elements, using rotated world bounds and one undo entry.
+- Distribute horizontally/vertically from Edit → Arrange for three or more
+  selected elements with equal gaps, fixed outer elements and one undo entry.
 - Persisted theme/tool; eframe-persisted window geometry and panel widths.
 - Tool palette with shortcuts, painted icons and accessible names.
 - Dark/light themes with central palette and contrast tests.
@@ -229,8 +233,10 @@ automation allowed). Items requiring a human reviewer:
 ## Known issues / limitations
 
 - Edit contains Undo/Redo, Cut/Copy/Paste, Select All, Duplicate, Delete, Group,
-  Ungroup, Order and the Arrange alignment submenu; distribution arrives in
-  task 4.9. File has only Quit until document I/O (Stage 5).
+  Ungroup, Order and the Arrange alignment/distribution submenu. File has only
+  Quit until document I/O (Stage 5).
+- Arrange commands have no keyboard shortcuts; they are available only from the
+  Edit menu, and the menu itself was not clicked in a live window.
 - Z-order moves rewrite paint slots densely (0..n), so elements whose slot
   actually changed are replaced; this normalises any non-dense imported
   z-orders the first time a move touches them.
@@ -250,7 +256,7 @@ automation allowed). Items requiring a human reviewer:
 
 1. Read `AGENTS.md`, `project/ROADMAP.md`, this file, `project/DECISIONS.md`.
 2. `git status` must be clean; run `cargo test --workspace` for the baseline.
-3. Start with the first incomplete task, 4.9 — Distribution.
+3. Start with the first incomplete task, 5.1 — Native document format v1.
 4. Verify format, clippy, tests, build, and `timeout 8 ./target/debug/epsilon`.
 5. Update this file, `ROADMAP.md`, `CHANGELOG.md`, then commit and push.
 

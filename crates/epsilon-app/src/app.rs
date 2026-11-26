@@ -4,8 +4,8 @@ use eframe::egui::{self, Align, Layout, RichText};
 
 use epsilon_core::clipboard::{ClipboardPayload, PASTE_OFFSET};
 use epsilon_core::document::{
-    Align as ElementAlign, Color as DocumentColor, Document, Element, ElementId, ElementKind,
-    FillStyle, StrokeStyle, TextAlign, ZOrderMove,
+    Align as ElementAlign, Color as DocumentColor, Distribute as ElementDistribute, Document,
+    Element, ElementId, ElementKind, FillStyle, StrokeStyle, TextAlign, ZOrderMove,
 };
 use epsilon_core::geometry::{
     Point, Rect, ResizeHandle, arrowhead_points, constrain_angle, resize_rect, rotate_point,
@@ -732,7 +732,6 @@ enum Action {
     ClearSelection,
     Group,
     Ungroup,
-    Align(ElementAlign),
     ZOrder(ZOrderMove),
 }
 
@@ -1294,6 +1293,11 @@ impl EpsilonApp {
         self.editing_text.is_none() && self.selected.len() >= 2
     }
 
+    /// Distribution needs three selected elements to create equal gaps.
+    fn can_distribute(&self) -> bool {
+        self.editing_text.is_none() && self.selected.len() >= 3
+    }
+
     /// Ungrouping needs at least one selected element that belongs to a group.
     fn can_ungroup(&self) -> bool {
         self.editing_text.is_none()
@@ -1399,6 +1403,26 @@ impl EpsilonApp {
             return false;
         }
         let changes = self.document.align_changes(&self.selected_ids(), align);
+        if changes.is_empty() {
+            return false;
+        }
+        let (before, after): (Vec<Element>, Vec<Element>) = changes.into_iter().unzip();
+        match Transaction::replace(before, after) {
+            Ok(transaction) => self.commit_transaction(transaction),
+            Err(error) => {
+                self.history_error = Some(format!("Edit failed: {error}"));
+                false
+            }
+        }
+    }
+
+    /// Distributes the selection with equal gaps along one axis as a single
+    /// history transaction, preserving the selection.
+    fn distribute_selection(&mut self, axis: ElementDistribute) -> bool {
+        if !self.can_distribute() || self.history_blocked() {
+            return false;
+        }
+        let changes = self.document.distribute_changes(&self.selected_ids(), axis);
         if changes.is_empty() {
             return false;
         }
@@ -1747,6 +1771,19 @@ impl EpsilonApp {
                                     ui.close();
                                 }
                             }
+                            ui.separator();
+                            for (label, axis) in [
+                                ("Distribute Horizontally", ElementDistribute::Horizontal),
+                                ("Distribute Vertically", ElementDistribute::Vertical),
+                            ] {
+                                if ui
+                                    .add_enabled(self.can_distribute(), egui::Button::new(label))
+                                    .clicked()
+                                {
+                                    self.distribute_selection(axis);
+                                    ui.close();
+                                }
+                            }
                         });
                     });
                     ui.menu_button("View", |ui| {
@@ -1960,9 +1997,6 @@ impl EpsilonApp {
             }
             Action::Ungroup => {
                 self.ungroup_selection();
-            }
-            Action::Align(align) => {
-                self.align_selection(align);
             }
             Action::ZOrder(movement) => {
                 self.move_selection_in_z_order(movement);
@@ -5138,6 +5172,54 @@ mod tests {
         app.selected = HashSet::from([app.document.elements[0].id]);
         assert!(!app.align_selection(ElementAlign::Right));
         assert_eq!(app.history.undo_len(), history_before);
+    }
+
+    fn distribution_app() -> EpsilonApp {
+        let mut app = EpsilonApp::default();
+        for (start, end) in [
+            (Point::new(0.0, 0.0), Point::new(40.0, 20.0)),
+            (Point::new(10.0, 50.0), Point::new(50.0, 70.0)),
+            (Point::new(100.0, 80.0), Point::new(140.0, 100.0)),
+        ] {
+            app.commit_shape(ElementKind::Rectangle, start, end);
+        }
+        app.selected = app.document.elements.iter().map(|e| e.id).collect();
+        app
+    }
+
+    #[test]
+    fn distribute_selection_commits_one_transaction_and_undoes() {
+        let mut app = distribution_app();
+        let original = app.document.clone();
+        let history_before = app.history.undo_len();
+
+        assert!(app.distribute_selection(ElementDistribute::Horizontal));
+        assert_eq!(app.history.undo_len(), history_before + 1);
+        assert_eq!(
+            app.selected.len(),
+            3,
+            "distribution preserves the selection"
+        );
+        let xs: Vec<f64> = app
+            .document
+            .elements
+            .iter()
+            .map(|element| element.world_bounds().min.x)
+            .collect();
+        assert_eq!(xs, vec![0.0, 50.0, 100.0]);
+
+        assert!(
+            !app.distribute_selection(ElementDistribute::Horizontal),
+            "already-even gaps must not add history"
+        );
+        assert_eq!(app.history.undo_len(), history_before + 1);
+
+        assert!(app.undo());
+        assert_eq!(app.document, original);
+
+        let removed = app.document.elements[2].id;
+        app.selected.remove(&removed);
+        assert!(!app.distribute_selection(ElementDistribute::Horizontal));
     }
 
     #[test]

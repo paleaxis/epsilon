@@ -577,13 +577,29 @@ Core tests cover every edge, a rotated rectangle, unknown IDs and fewer than two
 elements; app tests cover exact undo, selection preservation and no-op history.
 Interactive menu clicks were not manually inspected.
 
-### [ ] 4.9 — Distribution
+### [x] 4.9 — Distribution
 
 Distribute horizontally/vertically with equal gaps for 3+ elements.
 
 Acceptance: distribution tests incl. already-even and overlapping cases.
 
+Completed 2026-11-26: `Distribute` and `Document::distribute_changes` sort the
+selection by rotated world bounds along one axis, keep the outermost elements
+fixed and translate the interior elements so every gap is equal. Overlapping
+selections produce a negative but equal gap; already-even, undersized and
+unknown-ID selections yield no changes. The app exposes both axes under Edit →
+Arrange for three or more selected elements, committing one transaction that
+preserves the selection and records no history for no-ops. Core tests cover
+mixed sizes, overlap, even spacing and undersized input; app tests cover exact
+undo and no-op history. Interactive menu clicks were not manually inspected.
+
 ---
+
+## Stage 4 complete — editing experience (2026-11-26)
+
+Selection, clipboard, deletion/duplication, z-order, context menus, grouping,
+alignment and distribution are implemented and verified. Stage 5 begins with
+the native document format.
 
 ## Stage 5 — Documents and persistence
 

@@ -521,6 +521,14 @@ pub enum Align {
     Bottom,
 }
 
+/// An axis for equal-gap distribution of a multi-element selection. The
+/// outermost elements stay fixed and the interior elements move.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Distribute {
+    Horizontal,
+    Vertical,
+}
+
 /// A complete document: schema version, canvas settings and ordered elements.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Document {
@@ -770,6 +778,76 @@ impl Document {
                 }
             })
             .collect()
+    }
+
+    /// Before/after snapshots that distribute three or more elements with
+    /// equal gaps between their rotated world bounds. The first and last
+    /// elements in the axis order stay fixed, so the outer extent is preserved;
+    /// interior elements are translated. Overlapping selections produce a
+    /// negative gap rather than being rejected. Unknown IDs are ignored and
+    /// already-even or undersized selections produce no changes.
+    pub fn distribute_changes(
+        &self,
+        ids: &[ElementId],
+        axis: Distribute,
+    ) -> Vec<(Element, Element)> {
+        let mut elements: Vec<&Element> = ids.iter().filter_map(|id| self.element(*id)).collect();
+        if elements.len() < 3 {
+            return Vec::new();
+        }
+        elements.sort_by(|a, b| {
+            let first = a.world_bounds();
+            let second = b.world_bounds();
+            let ordering = match axis {
+                Distribute::Horizontal => first
+                    .min
+                    .x
+                    .total_cmp(&second.min.x)
+                    .then_with(|| first.min.y.total_cmp(&second.min.y)),
+                Distribute::Vertical => first
+                    .min
+                    .y
+                    .total_cmp(&second.min.y)
+                    .then_with(|| first.min.x.total_cmp(&second.min.x)),
+            };
+            ordering.then_with(|| a.id.cmp(&b.id))
+        });
+
+        let bounds: Vec<Rect> = elements
+            .iter()
+            .map(|element| element.world_bounds())
+            .collect();
+        let (start, end, total_size) = match axis {
+            Distribute::Horizontal => (
+                bounds[0].min.x,
+                bounds[bounds.len() - 1].max.x,
+                bounds.iter().map(|bound| bound.width()).sum::<f64>(),
+            ),
+            Distribute::Vertical => (
+                bounds[0].min.y,
+                bounds[bounds.len() - 1].max.y,
+                bounds.iter().map(|bound| bound.height()).sum::<f64>(),
+            ),
+        };
+        let gap = (end - start - total_size) / (elements.len() - 1) as f64;
+
+        let mut cursor = start;
+        let mut changes = Vec::new();
+        for (element, bounds) in elements.into_iter().zip(bounds) {
+            let (delta, size) = match axis {
+                Distribute::Horizontal => (cursor - bounds.min.x, bounds.width()),
+                Distribute::Vertical => (cursor - bounds.min.y, bounds.height()),
+            };
+            if delta.abs() > f64::EPSILON {
+                let update = match axis {
+                    Distribute::Horizontal => Point::new(delta, 0.0),
+                    Distribute::Vertical => Point::new(0.0, delta),
+                };
+                changes.push((element.clone(), element.translated(update)));
+            }
+            cursor += size + gap;
+        }
+        changes
     }
 
     pub fn remove(&mut self, id: ElementId) -> Option<Element> {
@@ -1415,6 +1493,66 @@ mod tests {
         assert!(
             document
                 .align_changes(&[ElementId::new(9999), other], Align::Left)
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn distribute_changes_equalise_gaps_and_keep_the_extremes() {
+        let mut document = Document::new();
+        let first = document.add(Element::new(ElementKind::Rectangle, 0.0, 0.0, 40.0, 20.0));
+        let second = document.add(Element::new(ElementKind::Rectangle, 10.0, 50.0, 40.0, 20.0));
+        let third = document.add(Element::new(
+            ElementKind::Rectangle,
+            100.0,
+            80.0,
+            40.0,
+            20.0,
+        ));
+        let ids = [first, second, third];
+
+        let horizontal = document.distribute_changes(&ids, Distribute::Horizontal);
+        assert_eq!(
+            horizontal.len(),
+            1,
+            "only the overlapping middle element moves"
+        );
+        assert_eq!(horizontal[0].1.id, second);
+        assert!((horizontal[0].1.x - 50.0).abs() < 1e-9);
+        assert!(
+            (horizontal[0].1.y - 50.0).abs() < 1e-9,
+            "only x should move"
+        );
+        assert!((horizontal[0].1.x - 40.0 - 10.0).abs() < 1e-9);
+
+        let vertical = document.distribute_changes(&ids, Distribute::Vertical);
+        assert_eq!(vertical.len(), 1, "only the middle element moves");
+        assert_eq!(vertical[0].1.id, second);
+        assert!((vertical[0].1.y - 40.0).abs() < 1e-9);
+        assert!((vertical[0].1.x - 10.0).abs() < 1e-9, "only y should move");
+    }
+
+    #[test]
+    fn distribute_changes_skip_even_and_undersized_selections() {
+        let mut document = Document::new();
+        let first = document.add(Element::new(ElementKind::Rectangle, 0.0, 0.0, 40.0, 20.0));
+        let second = document.add(Element::new(ElementKind::Rectangle, 50.0, 0.0, 40.0, 20.0));
+        let third = document.add(Element::new(ElementKind::Rectangle, 100.0, 0.0, 40.0, 20.0));
+        assert!(
+            document
+                .distribute_changes(&[first, second, third], Distribute::Horizontal)
+                .is_empty(),
+            "equal gaps produce no changes"
+        );
+
+        assert!(
+            document
+                .distribute_changes(&[first, second], Distribute::Horizontal)
+                .is_empty()
+        );
+        assert!(
+            document
+                .distribute_changes(&[ElementId::new(9999)], Distribute::Horizontal)
                 .is_empty()
         );
     }

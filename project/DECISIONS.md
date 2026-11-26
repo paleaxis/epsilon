@@ -866,3 +866,27 @@ the commands under Edit → Arrange rather than assigning six new shortcuts.
 keeps the core UI-independent. The Arrange submenu is enabled only for a
 multi-selection, and each alignment is one undo step. No new dependency or
 shortcut-table surface was introduced.
+
+---
+
+## D-044 — Distribution equalises gaps between world bounds and fixes the extremes (2026-11-26)
+
+**Context.** Task 4.9 needs horizontal and vertical distribution for three or
+more elements, including already-even and overlapping selections, with results
+that can be unit-tested independently of the UI.
+
+**Decision.** `Distribute { Horizontal, Vertical }` and
+`Document::distribute_changes(ids, axis)` live in core. Elements are ordered by
+their rotated world bounds along the axis (ties by element ID), the outermost
+elements stay fixed, and the interior elements are translated so the gap
+between consecutive bounds is `(outer extent - total size) / (n - 1)`. The gap
+may be negative for overlapping selections rather than being rejected.
+Already-even selections, fewer than three elements and unknown IDs produce no
+changes. The app commits changes in one `Transaction::replace`, preserves the
+selection, and exposes both axes under Edit → Arrange beside alignment; no
+shortcuts were assigned.
+
+**Consequences.** Distribution is deterministic, handles mixed element sizes and
+overlap, and never adds empty history entries. The outer extent is stable, so
+repeated distribution is a no-op. No new dependencies or shortcut-table surface
+were introduced.
