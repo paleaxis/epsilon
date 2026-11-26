@@ -4,6 +4,16 @@ Notable changes, newest first. Version sections are added at release time.
 
 ## [Unreleased]
 
+### Added — 2026-11-27 (task 6.5)
+
+- File → Copy as Image copies the selection, or the whole canvas when nothing
+  is selected, to the system clipboard as a PNG through the cropped export
+  pipeline at 1× with the document background.
+- `arboard` clipboard integration with Wayland data-control preferred and X11
+  fallback; render and clipboard failures are reported in the status bar.
+- Straight-alpha RGBA rendering for clipboard images, converting tiny-skia's
+  premultiplied pixels and preserving semi-transparent fills.
+
 ### Added — 2026-11-26 (task 6.4)
 
 - Unified File → Export… dialog with selection/entire-canvas scope, PNG/SVG

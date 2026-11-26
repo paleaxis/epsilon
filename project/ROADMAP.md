@@ -800,11 +800,33 @@ boxes for PNG and SVG, 2× scale, invalid custom scale, empty selection, cancel
 safety and overwrite confirmation. Live dialog/menu interaction was not
 manually inspected.
 
-### [ ] 6.5 — Clipboard image export
+### [x] 6.5 — Clipboard image export
 
 Copy selection/canvas as PNG to system clipboard.
 
 Acceptance: pasting into an external app works (manual); failure path reported.
+
+Completed 2026-11-27: File → Copy as Image renders the current selection (or the
+whole canvas when nothing is selected) through the cropped PNG pipeline at 1×
+with the document background, converts tiny-skia's premultiplied pixels to
+straight RGBA and hands them to `arboard`, which advertises `image/png` on the
+system clipboard. `arboard` is added with `image-data` and
+`wayland-data-control` so niri's data-control protocol is preferred without
+requiring XWayland, with X11 as fallback (D-056). Empty scenes, empty
+selections, renders that exceed the export limits and unavailable clipboard
+backends all surface as status-bar errors. Tests cover straight-alpha RGBA,
+dimensions, and the empty-document/empty-selection failure paths without
+touching the real clipboard. Pasting into an external application remains a
+manual acceptance item.
+
+---
+
+## Stage 6 complete — export (2026-11-27)
+
+PNG and SVG file export, the unified selection/scale/format dialog and
+clipboard image copy are implemented and verified. Manual visual comparisons
+and paste-into-external-app checks remain documented as pending acceptance
+items in `PROJECT_STATE.md`.
 
 ---
 

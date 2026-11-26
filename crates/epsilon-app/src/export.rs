@@ -35,6 +35,14 @@ pub struct RenderedPng {
     pub size: ExportSize,
 }
 
+/// Straight (non-premultiplied) RGBA8 pixels and their dimensions, ready for
+/// the system clipboard.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RenderedRgba {
+    pub bytes: Vec<u8>,
+    pub size: ExportSize,
+}
+
 /// Why a PNG could not be rendered.
 #[derive(Debug, Clone, PartialEq)]
 pub enum PngError {
@@ -89,6 +97,30 @@ impl Projection {
 
 /// Renders the document to a PNG cropped to its scene bounds.
 pub fn render_png(document: &Document, options: &ExportOptions) -> Result<RenderedPng, PngError> {
+    let (pixmap, size) = render_pixmap(document, options)?;
+    let bytes = pixmap
+        .encode_png()
+        .map_err(|error| PngError::Raster(error.to_string()))?;
+    Ok(RenderedPng { bytes, size })
+}
+
+/// Renders the document to straight RGBA8 pixels for the system clipboard.
+///
+/// Clipboard APIs take unmultiplied alpha, while tiny-skia stores
+/// premultiplied pixels, so the buffer is converted once here instead of
+/// leaking that detail into the clipboard integration.
+pub fn render_rgba(document: &Document, options: &ExportOptions) -> Result<RenderedRgba, PngError> {
+    let (pixmap, size) = render_pixmap(document, options)?;
+    Ok(RenderedRgba {
+        bytes: unpremultiply(pixmap.data()),
+        size,
+    })
+}
+
+fn render_pixmap(
+    document: &Document,
+    options: &ExportOptions,
+) -> Result<(Pixmap, ExportSize), PngError> {
     let size = export::export_size(document, options)?;
     let mut pixmap = Pixmap::new(size.width, size.height).ok_or_else(|| {
         PngError::Raster(format!(
@@ -111,10 +143,25 @@ pub fn render_png(document: &Document, options: &ExportOptions) -> Result<Render
         paint_element(&mut pixmap, &font, element, projection, options.rough);
     }
 
-    let bytes = pixmap
-        .encode_png()
-        .map_err(|error| PngError::Raster(error.to_string()))?;
-    Ok(RenderedPng { bytes, size })
+    Ok((pixmap, size))
+}
+
+/// Converts premultiplied RGBA8 to straight RGBA8, preserving pixel order.
+fn unpremultiply(data: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(data.len());
+    for pixel in data.as_chunks::<4>().0 {
+        let alpha = u32::from(pixel[3]);
+        if alpha == 0 {
+            out.extend_from_slice(&[0, 0, 0, 0]);
+            continue;
+        }
+        for channel in &pixel[..3] {
+            let straight = (u32::from(*channel) * 255 + alpha / 2) / alpha;
+            out.push(straight.min(255) as u8);
+        }
+        out.push(pixel[3]);
+    }
+    out
 }
 
 /// The font bytes embedded in the application UI, used for exported text.
@@ -893,6 +940,32 @@ mod tests {
         let first = render(&document, &options);
         let second = render(&document, &options);
         assert_eq!(first.bytes, second.bytes);
+    }
+
+    #[test]
+    fn rgba_export_is_straight_alpha_at_the_same_dimensions() {
+        let mut document = Document::new();
+        let mut element = rectangle(10.0, 10.0, 100.0, 100.0);
+        element.style.fill = Color::rgb(200, 100, 50);
+        element.style.opacity = 0.5;
+        document.add(element);
+
+        let rgba = render_rgba(&document, &ExportOptions::default()).expect("render RGBA");
+        let png = render(&document, &ExportOptions::default());
+        assert_eq!((rgba.size.width, rgba.size.height), (102, 102));
+        assert_eq!(png.size, rgba.size);
+        assert_eq!(rgba.bytes.len(), 102 * 102 * 4);
+
+        // A transparent corner stays zero and the semi-transparent fill is
+        // un-premultiplied back to its straight color and 50% alpha.
+        let corner = &rgba.bytes[..4];
+        assert_eq!(corner, &[0, 0, 0, 0]);
+        let center = (51 * 102 + 51) * 4;
+        let pixel = &rgba.bytes[center..center + 4];
+        assert!((pixel[0] as i32 - 200).abs() <= 2, "red was {pixel:?}");
+        assert!((pixel[1] as i32 - 100).abs() <= 2, "green was {pixel:?}");
+        assert!((pixel[2] as i32 - 50).abs() <= 2, "blue was {pixel:?}");
+        assert!((pixel[3] as i32 - 128).abs() <= 1, "alpha was {pixel:?}");
     }
 
     #[test]

@@ -742,6 +742,9 @@ pub struct EpsilonApp {
     paste_count: u32,
     /// Last clipboard command result, shown in the status bar.
     clipboard_feedback: Option<ClipboardFeedback>,
+    /// App-owned system clipboard for image copies; initialized on first use
+    /// so the copied image stays available for the session.
+    clipboard_image: crate::clipboard_image::ClipboardImage,
     /// Selection snapshot captured before a continuous properties edit.
     property_edit_before: Option<Vec<Element>>,
     /// Last pointer position in world coordinates, if the pointer is over the
@@ -818,6 +821,7 @@ impl Default for EpsilonApp {
             clipboard: None,
             paste_count: 0,
             clipboard_feedback: None,
+            clipboard_image: crate::clipboard_image::ClipboardImage::default(),
             property_edit_before: None,
             pointer_world: None,
             canvas_rect: egui::Rect::NOTHING,
@@ -2014,6 +2018,55 @@ impl EpsilonApp {
         }
     }
 
+    fn can_copy_image(&self) -> bool {
+        !self.document.elements.is_empty()
+    }
+
+    /// Copies the selection, or the whole canvas when nothing is selected, to
+    /// the system clipboard as a PNG image (task 6.5).
+    fn copy_as_image(&mut self) -> bool {
+        if self.history_blocked() {
+            self.file_feedback = Some(FileFeedback::Error(
+                "Finish the current edit before copying an image".to_owned(),
+            ));
+            return false;
+        }
+        let scope = if self.selected.is_empty() {
+            ExportScope::Document
+        } else {
+            ExportScope::Selection
+        };
+        self.copy_scope_as_image(scope)
+    }
+
+    fn copy_scope_as_image(&mut self, scope: ExportScope) -> bool {
+        let document = self.export_document_for_scope(scope);
+        let options = ExportOptions {
+            scale: ExportScale::One,
+            rough: !self.clean_rendering,
+            ..ExportOptions::default()
+        }
+        .with_document_background(&document);
+        match self.clipboard_image.copy(&document, &options) {
+            Ok(size) => {
+                let what = match scope {
+                    ExportScope::Document => "canvas",
+                    ExportScope::Selection => "selection",
+                };
+                self.file_feedback = Some(FileFeedback::Saved(format!(
+                    "Copied {what} as image ({}×{})",
+                    size.width, size.height
+                )));
+                true
+            }
+            Err(error) => {
+                self.file_feedback =
+                    Some(FileFeedback::Error(format!("Copy image failed: {error}")));
+                false
+            }
+        }
+    }
+
     fn export_to_path(
         &mut self,
         path: &Path,
@@ -2878,6 +2931,19 @@ impl EpsilonApp {
                         }
                         if ui.button("Export SVG…").clicked() {
                             self.export_svg_dialog();
+                            ui.close();
+                        }
+                        if ui
+                            .add_enabled(
+                                self.can_copy_image(),
+                                egui::Button::new("Copy as Image"),
+                            )
+                            .on_hover_text(
+                                "Copy the selection, or the whole canvas when nothing is selected, as a PNG image",
+                            )
+                            .clicked()
+                        {
+                            self.copy_as_image();
                             ui.close();
                         }
                         if !self.recent.is_empty() {
@@ -6785,6 +6851,32 @@ mod tests {
         assert!(alias_path.exists());
 
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn copy_image_reports_an_empty_document_without_touching_the_clipboard() {
+        let mut app = EpsilonApp::default();
+        assert!(!app.can_copy_image());
+        assert!(!app.copy_as_image());
+        assert!(matches!(
+            app.file_feedback,
+            Some(FileFeedback::Error(ref message))
+                if message.contains("Copy image failed") && message.contains("nothing to export")
+        ));
+    }
+
+    #[test]
+    fn copy_image_reports_an_empty_selection_without_touching_the_clipboard() {
+        let mut app = selection_app();
+        assert!(app.can_copy_image());
+        app.selected.clear();
+
+        assert!(!app.copy_scope_as_image(ExportScope::Selection));
+        assert!(matches!(
+            app.file_feedback,
+            Some(FileFeedback::Error(ref message))
+                if message.contains("Copy image failed") && message.contains("nothing to export")
+        ));
     }
 
     #[test]

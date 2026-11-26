@@ -21,6 +21,8 @@ rfd.workspace = true
 # surface. Chosen in task 6.1 (DECISIONS.md D-052).
 tiny-skia = "0.12"
 fontdue = "0.9"
+# Clipboard image export (task 6.5); see DECISIONS.md D-056.
+arboard.workspace = true
 epsilon-core = { path = "../epsilon-core" }
 
 [lints.rust]

@@ -1193,3 +1193,36 @@ dialog is testable without native file pickers, and overwrite behavior is
 explicit rather than delegated to the platform. The dialog state is in-memory
 only (not persisted); switching format does not rewrite the typed filename in
 the field, though the exported file gets the correct extension.
+
+---
+
+## D-056 — Clipboard images use `arboard` directly with Wayland data-control (2026-11-27)
+
+**Context.** Task 6.5 must place a PNG of the selection or canvas on the system
+clipboard so other applications can paste it. egui 0.37 exposes
+`Context::copy_image`, but it is fire-and-forget: failures only reach a log, and
+the workspace's `eframe` build keeps its `clipboard` feature disabled, so no
+image backend is compiled in. The acceptance criteria require the failure path
+to be reported to the user.
+
+**Decision.** Add `arboard` 3.7 as a direct app dependency with
+`default-features = false` and only `image-data` + `wayland-data-control`.
+`image-data` provides `set_image`, which advertises `image/png`; the
+data-control feature prefers the compositor's `ext-data-control`/
+`wlr-data-control` protocol when `WAYLAND_DISPLAY` is set (niri supports it) and
+falls back to X11 otherwise, so the clipboard works with or without XWayland.
+The existing rasterizer gains `render_rgba`, which returns straight
+(non-premultiplied) RGBA8 because clipboard APIs expect unmultiplied alpha while
+tiny-skia stores premultiplied pixels. `Copy as Image` renders through the same
+cropped, deterministic pipeline as PNG export at 1× with the document
+background, copying the selection when one exists and the whole canvas
+otherwise; render and clipboard errors become status-bar messages.
+
+**Consequences.** Image copy no longer depends on eframe's clipboard feature and
+can report why it failed (empty scene, oversized image, unavailable clipboard).
+The dependency adds the `image` encoder, `x11rb` and `wl-clipboard-rs` to the
+graph; the latter two are platform clipboard transports. Clipboard ownership
+lasts while Epsilon runs, so the image is not daemonized after exit. Automated
+tests cover RGBA conversion, empty-document/empty-selection failures and the
+unavailability message without touching the real clipboard; pasting the image
+into an external application remains a manual acceptance item.

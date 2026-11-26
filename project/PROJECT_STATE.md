@@ -1,9 +1,9 @@
 # Project State
 
-Last updated: 2026-11-26
-Current stage: **Stage 6 — Export**
-Last completed task: **6.4 — Export UI**
-Next task: **6.5 — Clipboard image export**
+Last updated: 2026-11-27
+Current stage: **Stage 7 — Desktop readiness** (Stage 6 complete)
+Last completed task: **6.5 — Clipboard image export**
+Next task: **7.1 — Error handling and logging pass**
 
 ## Status
 
@@ -57,7 +57,11 @@ writes the same cropped scene as world-unit vector primitives with text as
 File → Export… opens a unified dialog for selection or entire canvas, PNG/SVG,
 1×/2×/4×/custom scale, document or transparent background and a filename, with
 an explicit overwrite confirmation. Selection exports are cropped to the
-selected elements only. Clipboard image export remains task 6.5.
+selected elements only. File → Copy as Image places the selection (or the whole
+canvas when nothing is selected) on the system clipboard as a PNG through
+`arboard`, using the Wayland data-control protocol when available and X11
+otherwise; render and clipboard failures are reported in the status bar. Stage 6
+is complete.
 
 Repository layout:
 
@@ -83,7 +87,8 @@ crates/epsilon-app/         eframe desktop shell
   src/layout.rs             shell size budgets + compile-time assertions
   src/theme.rs              semantic palettes, Visuals setup, serializable Theme
   src/tools.rs              Tool enum, shortcuts, painted icons, tool buttons
-  src/export.rs             deterministic PNG rasterizer + 6 tests
+  src/export.rs             deterministic PNG/RGBA rasterizer + 7 tests
+  src/clipboard_image.rs    system clipboard image copy + 2 tests
   src/svg.rs                deterministic SVG exporter + 4 tests
   src/app.rs                EpsilonApp, menus, toolbar, tool state, history wiring, settings
 ```
@@ -92,7 +97,7 @@ Working UI actions:
 
 | Where | Action |
 | --- | --- |
-| File menu | New/Open/Save/Save As, Excalidraw import/export, Export…, Export PNG/SVG, Open Recent, Quit (sends `ViewportCommand::Close`) |
+| File menu | New/Open/Save/Save As, Excalidraw import/export, Export…, Export PNG/SVG, Copy as Image, Open Recent, Quit (sends `ViewportCommand::Close`) |
 | Edit menu | Undo/Redo (history-aware), Cut/Copy/Paste, Select All, Duplicate, Delete and Order (front/forward/backward/back) |
 | View menu | Dark mode, grid and clean-rendering toggles, applied immediately |
 | Help menu | About Epsilon (dialog) |
@@ -144,6 +149,13 @@ Other shell behavior:
   records one undoable insert transaction. Cut is copy plus one removal
   transaction. Clipboard actions are disabled while a canvas text editor is open.
   Status bar reports Copied/Cut/Pasted counts and unsupported payloads.
+- Clipboard image: File → Copy as Image renders the selection, or the whole
+  canvas when nothing is selected, through the cropped PNG pipeline at 1× with
+  the document background and writes `image/png` to the system clipboard via
+  `arboard` (Wayland data-control preferred, X11 fallback). Empty scenes,
+  oversized images and unavailable clipboard backends are reported in the
+  status bar; nothing is written to disk. Clipboard ownership lasts while the
+  app runs.
 - Export dialog: File → Export… chooses selection (disabled with no selection)
   or entire canvas, PNG/SVG, 1×/2×/4×/custom scale, document/transparent
   background and filename. The extension follows the chosen format; exporting
@@ -167,24 +179,27 @@ Other shell behavior:
   `Context::egui_wants_keyboard_input()`; `cc.storage` is a field.
 - Remote: `origin git@github.com/paleaxis/epsilon.git`, branch `main`.
 
-## Verified commands and results (task 6.4)
+## Verified commands and results (task 6.5)
 
 | Command | Result |
 | --- | --- |
 | `cargo fmt --all -- --check` | exit 0 |
 | `cargo clippy --workspace --all-targets -- -D warnings` | exit 0 |
-| `cargo test --workspace` | **242 passed, 0 failed** (124 app, 113 core, 5 compat) |
+| `cargo test --workspace` | **247 passed, 0 failed** (129 app, 113 core, 5 compat) |
 | `cargo build --workspace` | success, no warnings |
 | `timeout 8 ./target/debug/epsilon` | exit 124 (alive, no stderr) |
 
-Task 6.4 adds the File → Export… dialog and selection-scoped exports. New app
-tests check selection PNG dimensions (54×64 for one rectangle vs 144×64 for the
-whole scene), selection SVG viewBox (98,18,54,64 for the ellipse), 2× scale
-(286×126), invalid custom scale, empty selection, alias/scope helpers, cancel
-safety and overwrite confirmation, plus a headless render of the dialog; core
-also pins `ExportScope`'s default. The dialog UI was rendered only in headless
-or unit paths; live menu clicks, the overwrite prompt and native file dialogs
-were not manually inspected. The SVG visual comparison and Excalidraw real-app
+Task 6.5 adds File → Copy as Image. New tests render a semi-transparent fill to
+straight RGBA and check dimensions, zero-alpha corners and recovered color/alpha
+(non-premultiplied), and verify that an empty document and an empty selection
+fail with "nothing to export" before any clipboard access. The clipboard module
+also tests its error text. The real system clipboard, menu click and external
+paste were not exercised here: the suite never overwrites the user's clipboard.
+The environment has both `WAYLAND_DISPLAY=wayland-1` and `DISPLAY=:1`, so
+`arboard` can prefer data-control and fall back to X11; `wayland-info` is not
+installed, so protocol exposure was not independently listed. Earlier task 6.4
+tests (selection PNG/SVG crops, scale, overwrite and cancel safety) still pass.
+The SVG visual comparison, export-dialog interaction and Excalidraw real-app
 checks remain pending manual items. Images/`files`, frames, bindings and
 arrowhead variants are not fully mapped.
 
@@ -270,6 +285,10 @@ arrowhead variants are not fully mapped.
 - Unified export dialog with selection/entire-canvas scope, PNG/SVG, scale,
   background and filename options, normalized extensions, overwrite
   confirmation and surfaced validation errors.
+- Clipboard image export from File → Copy as Image: selection or whole canvas
+  as a cropped 1× PNG with the document background, straight-alpha RGBA and
+  `arboard` transfer (Wayland data-control preferred, X11 fallback), with
+  status-bar failures.
 - Selection-only PNG and SVG exports cropped to the selected world bounds.
 - PNG export with scene-bounds cropping, 1x/2x/4x/custom scale, optional
 transparent background, deterministic element rasterization (rough strokes,
@@ -380,16 +399,37 @@ and overwrite confirmation without the live window:
 
 Status: **pending** — not performed in this environment.
 
+## Manual acceptance checklist — clipboard image (task 6.5)
+
+Automated tests cover the RGBA conversion and empty-scene failure paths. The
+system clipboard and an external paste were not exercised, because that would
+overwrite the user's clipboard:
+
+- [ ] Launch `./target/debug/epsilon`, draw two separated shapes and select
+  one, then choose File → Copy as Image and paste into an image editor; confirm
+  only the selected shape appears, cropped, at 1× with the document background.
+- [ ] Clear the selection (Esc), repeat Copy as Image and confirm the external
+  paste contains the whole canvas.
+- [ ] On niri, repeat after unsetting `DISPLAY` to confirm the Wayland
+  data-control path works without XWayland.
+- [ ] Copy a very large scene that exceeds the export limits and confirm the
+  status bar reports the failure and the clipboard is unchanged.
+- [ ] With an empty document, confirm the menu item is disabled and no
+  clipboard data is written.
+
+Status: **pending** — not performed in this environment.
+
 ## Known issues / limitations
 
 - Edit contains Undo/Redo, Cut/Copy/Paste, Select All, Duplicate, Delete, Group,
   Ungroup, Order and the Arrange alignment/distribution submenu. File has
   New/Open/Open Recent/Save/Save As, Excalidraw Import/Export and Quit with the
   unsaved-changes guard. Excalidraw images/frames/bindings are not mapped yet.
-- Stage 5 is complete; Stage 6 now has PNG and SVG pipelines plus the unified
-  export dialog. Clipboard image export remains. Manual acceptance remains for
-  opening an Excalidraw export in the real app, visually checking PNG/SVG
-  exports, and clicking the export dialog, overwrite prompt and native dialogs.
+- Stages 5 and 6 are complete: PNG and SVG pipelines, the unified export
+  dialog and clipboard image copy. Manual acceptance remains for opening an
+  Excalidraw export in the real app, visually checking PNG/SVG exports,
+  clicking the export dialog/overwrite prompt/native dialogs, and pasting a
+  copied image into an external application.
 - PNG text uses `fontdue` per-glyph advances and greedy word wrapping, not
   egui's shaping/kerning; rotated text is exported unrotated. Rough strokes are
   deterministic but not pixel-identical to the canvas anti-aliasing.
@@ -400,6 +440,11 @@ Status: **pending** — not performed in this environment.
 - SVG text is emitted as `<text>` with explicit-newline only wrapping and a
   generic sans-serif fallback, so its appearance depends on the viewer's font
   and is not pixel-identical to the canvas (D-054).
+- Clipboard images are owned by the running Epsilon process (no daemonization),
+  so the image may disappear from the clipboard after the app exits. Copy as
+  Image has no keyboard shortcut and always uses 1× with the document
+  background; the export dialog offers the other scale/background choices.
+  Text clipboard interop is unchanged and separate from image copy.
 - Arrange commands have no keyboard shortcuts; they are available only from the
   Edit menu, and the menu itself was not clicked in a live window.
 - Z-order moves rewrite paint slots densely (0..n), so elements whose slot
@@ -422,7 +467,7 @@ Status: **pending** — not performed in this environment.
 
 1. Read `AGENTS.md`, `project/ROADMAP.md`, this file, `project/DECISIONS.md`.
 2. `git status` must be clean; run `cargo test --workspace` for the baseline.
-3. Start with the first incomplete task, 6.5 — Clipboard image export.
+3. Start with the first incomplete task, 7.1 — Error handling and logging pass.
 4. Verify format, clippy, tests, build, and `timeout 8 ./target/debug/epsilon`.
 5. Update this file, `ROADMAP.md`, `CHANGELOG.md`, then commit and push.
 
