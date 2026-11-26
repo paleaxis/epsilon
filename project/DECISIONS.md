@@ -1166,3 +1166,30 @@ and geometry matches PNG cropping. Text wrapping is limited to explicit
 newlines because SVG has no portable font metrics at export time; viewers apply
 their own fallback font, so visual text parity with the canvas is not claimed.
 Manual visual comparison against the canvas remains a pending acceptance item.
+
+---
+
+## D-055 — Unified in-app export dialog over filtered documents (2026-11-26)
+
+**Context.** Task 6.4 needs one export path offering a selection or the whole
+canvas, PNG or SVG, a scale, a filename and safe overwrite handling, while the
+existing direct PNG/SVG menu actions must keep working.
+
+**Decision.** File → Export… opens an in-app egui dialog that owns the scope,
+format, scale, background and filename. A selected export builds a temporary
+`Document` containing only selected elements plus the original canvas settings,
+then feeds it through the existing cropped PNG/SVG pipelines; no export code
+duplicates element geometry. Scale is passed through `ExportOptions`, so the
+core's 32×/dimension/pixel limits remain the single validation point. The
+filename extension is normalized to the chosen format, and an existing file
+produces an in-app Overwrite/Cancel prompt; the destination is not touched until
+Overwrite is confirmed. Cancel closes the dialog and clears any pending
+overwrite without writing. Native `rfd` save dialogs remain only for the
+separate direct PNG/SVG and Excalidraw actions.
+
+**Consequences.** Selection exports are cropped to the selection's world bounds
+and omit every other element, reusing the same deterministic renderers. The
+dialog is testable without native file pickers, and overwrite behavior is
+explicit rather than delegated to the platform. The dialog state is in-memory
+only (not persisted); switching format does not rewrite the typed filename in
+the field, though the exported file gets the correct extension.

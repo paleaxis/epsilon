@@ -780,13 +780,25 @@ SVG writes atomically. Tests cover the cropped viewBox and width/height, empty
 scenes, every element kind, paint order, repeat determinism and an on-disk
 export. Visual comparison against the canvas was not performed here.
 
-### [ ] 6.4 — Export UI
+### [x] 6.4 — Export UI
 
 Export dialog: selection vs entire canvas, format, scale, filename; overwrite
 handling.
 
 Acceptance: exporting a selection omits other elements (bbox test); cancel is
 safe; errors surfaced.
+
+Completed 2026-11-26: File → Export… opens an in-app dialog for scope (entire
+canvas or the current selection, disabled when nothing is selected), format
+(PNG/SVG), scale (1×/2×/4×/custom validated by the core limits), document or
+transparent background, and filename. Selected exports build a filtered
+Document and reuse the cropped PNG/SVG pipelines; the dialog normalizes the
+filename extension, prompts before overwriting an existing file, keeps the file
+untouched until confirmation, and reports invalid scales or empty selections in
+the status bar. Cancel closes without writing. Tests cover selection bounding
+boxes for PNG and SVG, 2× scale, invalid custom scale, empty selection, cancel
+safety and overwrite confirmation. Live dialog/menu interaction was not
+manually inspected.
 
 ### [ ] 6.5 — Clipboard image export
 

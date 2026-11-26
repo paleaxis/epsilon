@@ -23,6 +23,16 @@ const ROUGH_MARGIN_PIXELS: f64 = 1.0;
 /// Half-width of the arrowhead, which reaches outside the line's own bounds.
 const ARROW_HEAD_MARGIN: f64 = 6.0;
 
+/// Which part of the document an export should include.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ExportScope {
+    /// Export every element in the document.
+    #[default]
+    Document,
+    /// Export only the currently selected elements.
+    Selection,
+}
+
 /// Preset and custom export scale factors.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub enum ExportScale {
@@ -315,6 +325,11 @@ mod tests {
             export_size(&square, &options),
             Err(ExportError::TooLarge { .. })
         ));
+    }
+
+    #[test]
+    fn export_scope_defaults_to_the_whole_document() {
+        assert_eq!(ExportScope::default(), ExportScope::Document);
     }
 
     #[test]

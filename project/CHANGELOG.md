@@ -4,6 +4,13 @@ Notable changes, newest first. Version sections are added at release time.
 
 ## [Unreleased]
 
+### Added — 2026-11-26 (task 6.4)
+
+- Unified File → Export… dialog with selection/entire-canvas scope, PNG/SVG
+  format, 1×/2×/4×/custom scale, document/transparent background, filename
+  normalization, overwrite confirmation and status-bar errors.
+- Selection-bounded PNG and SVG exports using the existing cropped pipelines.
+
 ### Added — 2026-11-26 (task 6.3)
 
 - SVG export for every element kind: cropped world-unit viewBox, rotation,

@@ -2,8 +2,8 @@
 
 Last updated: 2026-11-26
 Current stage: **Stage 6 — Export**
-Last completed task: **6.3 — SVG export**
-Next task: **6.4 — Export UI**
+Last completed task: **6.4 — Export UI**
+Next task: **6.5 — Clipboard image export**
 
 ## Status
 
@@ -54,7 +54,10 @@ every element kind deterministically with `tiny-skia` paths and `fontdue`
 glyphs. File → Export PNG… writes the cropped image atomically. SVG export
 writes the same cropped scene as world-unit vector primitives with text as
 `<text>`, rough/dashed strokes, hatch fills, arrowheads and paint order intact.
-Export-dialog options (selection, scale, filename) remain task 6.4.
+File → Export… opens a unified dialog for selection or entire canvas, PNG/SVG,
+1×/2×/4×/custom scale, document or transparent background and a filename, with
+an explicit overwrite confirmation. Selection exports are cropped to the
+selected elements only. Clipboard image export remains task 6.5.
 
 Repository layout:
 
@@ -70,7 +73,7 @@ crates/epsilon-core/        UI-independent engine (no egui dependency)
   src/recovery.rs           rotating autosaves, naming/retention/fallback + 5 tests
   src/recent.rs             bounded recent paths, dedup/prune/serde + 3 tests
   src/excalidraw.rs         Excalidraw import/export, extras preservation + 6 tests
-  src/export.rs             export crop bounds, scales, limits + 8 tests
+  src/export.rs             export crop bounds, scopes, scales, limits + 9 tests
   tests/excalidraw_compat.rs fixture compatibility suite + 5 tests
   tests/fixtures/           scene, future-version and malformed Excalidraw files
   src/history.rs            reversible commands, transactions, bounded undo/redo + 9 tests
@@ -89,7 +92,7 @@ Working UI actions:
 
 | Where | Action |
 | --- | --- |
-| File menu | New/Open/Save/Save As, Excalidraw import/export, Export PNG/SVG, Open Recent, Quit (sends `ViewportCommand::Close`) |
+| File menu | New/Open/Save/Save As, Excalidraw import/export, Export…, Export PNG/SVG, Open Recent, Quit (sends `ViewportCommand::Close`) |
 | Edit menu | Undo/Redo (history-aware), Cut/Copy/Paste, Select All, Duplicate, Delete and Order (front/forward/backward/back) |
 | View menu | Dark mode, grid and clean-rendering toggles, applied immediately |
 | Help menu | About Epsilon (dialog) |
@@ -141,6 +144,12 @@ Other shell behavior:
   records one undoable insert transaction. Cut is copy plus one removal
   transaction. Clipboard actions are disabled while a canvas text editor is open.
   Status bar reports Copied/Cut/Pasted counts and unsupported payloads.
+- Export dialog: File → Export… chooses selection (disabled with no selection)
+  or entire canvas, PNG/SVG, 1×/2×/4×/custom scale, document/transparent
+  background and filename. The extension follows the chosen format; exporting
+  to an existing file opens an Overwrite/Cancel prompt and leaves the file
+  untouched until confirmed. Invalid custom scales and empty selections are
+  reported in the status bar, and Cancel closes without writing (D-055).
 - Theme palette in `theme.rs`, default dark, explicit `ThemePreference`.
 - Six regions: menu bar, top toolbar, left rail, pannable/zoomable canvas, collapsible
   properties panel (200–400px, "No selection" empty state), status bar.
@@ -158,26 +167,26 @@ Other shell behavior:
   `Context::egui_wants_keyboard_input()`; `cc.storage` is a field.
 - Remote: `origin git@github.com/paleaxis/epsilon.git`, branch `main`.
 
-## Verified commands and results (task 6.3)
+## Verified commands and results (task 6.4)
 
 | Command | Result |
 | --- | --- |
 | `cargo fmt --all -- --check` | exit 0 |
 | `cargo clippy --workspace --all-targets -- -D warnings` | exit 0 |
-| `cargo test --workspace` | **233 passed, 0 failed** (116 app, 112 core, 5 compat) |
+| `cargo test --workspace` | **242 passed, 0 failed** (124 app, 113 core, 5 compat) |
 | `cargo build --workspace` | success, no warnings |
 | `timeout 8 ./target/debug/epsilon` | exit 124 (alive, no stderr) |
 
-Task 6.3 adds `epsilon-app::svg` (4 tests: cropped viewBox/dimensions, empty
-scenes, every element kind, paint order/determinism) and a File → Export SVG
-path with an on-disk round-trip app test. The PNG pipeline from 6.2 remains
-covered by core export geometry (8 tests) and the tiny-skia/fontdue rasterizer
-(6 tests plus an on-disk decode). Native launch was verified by process
-liveness; the exported SVG was validated as markup but not rendered or visually
-compared with the canvas. Native dialogs were not clicked, and an Excalidraw
-export was not opened in the real Excalidraw application (manual acceptance item
-remains). Images/`files`, frames, bindings and arrowhead variants are not fully
-mapped.
+Task 6.4 adds the File → Export… dialog and selection-scoped exports. New app
+tests check selection PNG dimensions (54×64 for one rectangle vs 144×64 for the
+whole scene), selection SVG viewBox (98,18,54,64 for the ellipse), 2× scale
+(286×126), invalid custom scale, empty selection, alias/scope helpers, cancel
+safety and overwrite confirmation, plus a headless render of the dialog; core
+also pins `ExportScope`'s default. The dialog UI was rendered only in headless
+or unit paths; live menu clicks, the overwrite prompt and native file dialogs
+were not manually inspected. The SVG visual comparison and Excalidraw real-app
+checks remain pending manual items. Images/`files`, frames, bindings and
+arrowhead variants are not fully mapped.
 
 ## Features implemented
 
@@ -258,6 +267,10 @@ mapped.
 - SVG export for every element kind with the same cropped viewBox, rotation,
   rough/dash/dot strokes, hatch fills, arrowheads, multi-line text and stable
   paint order, wired to File → Export SVG.
+- Unified export dialog with selection/entire-canvas scope, PNG/SVG, scale,
+  background and filename options, normalized extensions, overwrite
+  confirmation and surfaced validation errors.
+- Selection-only PNG and SVG exports cropped to the selected world bounds.
 - PNG export with scene-bounds cropping, 1x/2x/4x/custom scale, optional
 transparent background, deterministic element rasterization (rough strokes,
 dash/dot strokes, hatch fills, arrowheads, wrapped text), export size limits and
@@ -349,21 +362,41 @@ compared with the canvas:
 
 Status: **pending** — not performed in this environment.
 
+## Manual acceptance checklist — export dialog (task 6.4)
+
+Automated tests cover selection cropping, scale, invalid input, cancel safety
+and overwrite confirmation without the live window:
+
+- [ ] Launch `./target/debug/epsilon`, draw two separated shapes and select one.
+- [ ] File → Export…, choose Selection + PNG + 2×, keep the document background,
+  and export to a new file; confirm the image is cropped to the selected shape
+  at twice its size and does not include the other shape.
+- [ ] Repeat with SVG and confirm the viewBox covers only the selection.
+- [ ] Export again to the same filename and confirm the Overwrite/Cancel prompt
+  appears; Cancel must leave the old file unchanged.
+- [ ] Clear the selection and confirm the Selection radio is disabled; choose a
+  custom scale of `0`, `-1` or `abc` and confirm an error is shown.
+- [ ] Cancel the dialog and confirm no file is written.
+
+Status: **pending** — not performed in this environment.
+
 ## Known issues / limitations
 
 - Edit contains Undo/Redo, Cut/Copy/Paste, Select All, Duplicate, Delete, Group,
   Ungroup, Order and the Arrange alignment/distribution submenu. File has
   New/Open/Open Recent/Save/Save As, Excalidraw Import/Export and Quit with the
   unsaved-changes guard. Excalidraw images/frames/bindings are not mapped yet.
-- Stage 5 is complete; Stage 6 now has PNG and SVG pipelines. Clipboard image
-  export and the export dialog (selection vs canvas, scale, filename) remain.
-  Manual acceptance remains for opening an Excalidraw export in the real app,
-  visually checking PNG/SVG exports and clicking native dialogs/menus.
+- Stage 5 is complete; Stage 6 now has PNG and SVG pipelines plus the unified
+  export dialog. Clipboard image export remains. Manual acceptance remains for
+  opening an Excalidraw export in the real app, visually checking PNG/SVG
+  exports, and clicking the export dialog, overwrite prompt and native dialogs.
 - PNG text uses `fontdue` per-glyph advances and greedy word wrapping, not
   egui's shaping/kerning; rotated text is exported unrotated. Rough strokes are
   deterministic but not pixel-identical to the canvas anti-aliasing.
-- File → Export PNG/SVG always export the whole document at 1x with the
-  document background; scale and selection options arrive with task 6.4.
+- Direct File → Export PNG…/Export SVG… still export the whole document at 1×
+  with the document background; use File → Export… for selection, scale and
+  background options. The dialog's typed filename keeps its old extension when
+  the format changes, although the written file gets the correct one.
 - SVG text is emitted as `<text>` with explicit-newline only wrapping and a
   generic sans-serif fallback, so its appearance depends on the viewer's font
   and is not pixel-identical to the canvas (D-054).
@@ -389,7 +422,7 @@ Status: **pending** — not performed in this environment.
 
 1. Read `AGENTS.md`, `project/ROADMAP.md`, this file, `project/DECISIONS.md`.
 2. `git status` must be clean; run `cargo test --workspace` for the baseline.
-3. Start with the first incomplete task, 6.4 — Export UI.
+3. Start with the first incomplete task, 6.5 — Clipboard image export.
 4. Verify format, clippy, tests, build, and `timeout 8 ./target/debug/epsilon`.
 5. Update this file, `ROADMAP.md`, `CHANGELOG.md`, then commit and push.
 

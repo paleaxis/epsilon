@@ -10,7 +10,7 @@ use epsilon_core::document::{
     Element, ElementId, ElementKind, FillStyle, StrokeStyle, TextAlign, ZOrderMove,
 };
 use epsilon_core::excalidraw;
-use epsilon_core::export::{ExportOptions, ExportScale};
+use epsilon_core::export::{ExportOptions, ExportScale, ExportScope};
 use epsilon_core::format::{EpsilonFile, FILE_EXTENSION, write_bytes_atomically};
 use epsilon_core::geometry::{
     Point, Rect, ResizeHandle, arrowhead_points, constrain_angle, resize_rect, rotate_point,
@@ -565,6 +565,28 @@ enum UnsavedChoice {
     Cancel,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ExportFormat {
+    Png,
+    Svg,
+}
+
+impl ExportFormat {
+    fn extension(self) -> &'static str {
+        match self {
+            Self::Png => "png",
+            Self::Svg => "svg",
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Png => "PNG image",
+            Self::Svg => "SVG image",
+        }
+    }
+}
+
 impl FileFeedback {
     fn message(&self) -> &str {
         match self {
@@ -729,6 +751,22 @@ pub struct EpsilonApp {
     grid_enabled: bool,
     /// Draw exact architect-style strokes instead of seeded rough strokes.
     clean_rendering: bool,
+    /// Whether the export dialog window is open.
+    export_dialog_open: bool,
+    /// Scope chosen in the export dialog.
+    export_scope: ExportScope,
+    /// Format chosen in the export dialog.
+    export_format: ExportFormat,
+    /// Scale chosen in the export dialog.
+    export_scale: ExportScale,
+    /// Text for a custom scale factor in the export dialog.
+    export_custom_scale: String,
+    /// Whether the export dialog uses the document background.
+    export_background: bool,
+    /// Filename entered in the export dialog.
+    export_filename: String,
+    /// Destination waiting for an overwrite confirmation.
+    export_overwrite_path: Option<PathBuf>,
     /// Last canvas rect, used by toolbar zoom controls.
     canvas_rect: egui::Rect,
     /// Current pointer interaction mode for the canvas.
@@ -785,6 +823,14 @@ impl Default for EpsilonApp {
             canvas_rect: egui::Rect::NOTHING,
             grid_enabled: false,
             clean_rendering: false,
+            export_dialog_open: false,
+            export_scope: ExportScope::default(),
+            export_format: ExportFormat::Png,
+            export_scale: ExportScale::default(),
+            export_custom_scale: String::from("2"),
+            export_background: true,
+            export_filename: String::from("untitled.png"),
+            export_overwrite_path: None,
             pointer_mode: PointerMode::Idle,
             hover_screen: None,
             freehand_points: Vec::new(),
@@ -1765,17 +1811,31 @@ impl EpsilonApp {
     }
 
     fn export_png_to_path(&mut self, path: &Path) -> bool {
-        let name = path
-            .file_name()
-            .map(|name| name.to_string_lossy().into_owned())
-            .unwrap_or_else(|| path.display().to_string());
+        let document = self.document.clone();
+        self.export_png_document_to_path(&document, path)
+    }
+
+    fn export_png_document_to_path(&mut self, document: &Document, path: &Path) -> bool {
         let options = ExportOptions {
             scale: ExportScale::One,
             rough: !self.clean_rendering,
             ..ExportOptions::default()
         }
-        .with_document_background(&self.document);
-        let rendered = match crate::export::render_png(&self.document, &options) {
+        .with_document_background(document);
+        self.export_png_document_to_path_with_options(document, path, &options)
+    }
+
+    fn export_png_document_to_path_with_options(
+        &mut self,
+        document: &Document,
+        path: &Path,
+        options: &ExportOptions,
+    ) -> bool {
+        let name = path
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_else(|| path.display().to_string());
+        let rendered = match crate::export::render_png(document, options) {
             Ok(rendered) => rendered,
             Err(error) => {
                 self.file_feedback = Some(FileFeedback::Error(format!("Export failed: {error}")));
@@ -1795,6 +1855,62 @@ impl EpsilonApp {
                 false
             }
         }
+    }
+
+    #[cfg(test)]
+    fn export_png_scope_to_path(&mut self, path: &Path, scope: ExportScope) -> bool {
+        let document = self.export_document_for_scope(scope);
+        self.export_png_document_to_path(&document, path)
+    }
+
+    #[cfg(test)]
+    fn export_png_selection_to_path(&mut self, path: &Path) -> bool {
+        self.export_png_scope_to_path(path, ExportScope::Selection)
+    }
+
+    #[cfg(test)]
+    fn export_selection_to_path(&mut self, path: &Path, format: ExportFormat) -> bool {
+        let options = ExportOptions {
+            rough: !self.clean_rendering,
+            ..ExportOptions::default()
+        }
+        .with_document_background(&self.document);
+        self.export_to_path(path, format, ExportScope::Selection, options)
+    }
+
+    #[cfg(test)]
+    fn export_selected_to_path(&mut self, path: &Path, format: ExportFormat) -> bool {
+        self.export_selection_to_path(path, format)
+    }
+
+    #[cfg(test)]
+    fn export_png_selected_to_path(&mut self, path: &Path) -> bool {
+        self.export_png_selection_to_path(path)
+    }
+
+    #[cfg(test)]
+    fn export_selected_png_to_path(&mut self, path: &Path) -> bool {
+        self.export_png_selection_to_path(path)
+    }
+
+    #[cfg(test)]
+    fn export_svg_selected_to_path(&mut self, path: &Path) -> bool {
+        self.export_svg_selection_to_path(path)
+    }
+
+    #[cfg(test)]
+    fn export_selected_svg_to_path(&mut self, path: &Path) -> bool {
+        self.export_svg_selection_to_path(path)
+    }
+
+    #[cfg(test)]
+    fn export_png_to_path_with_scope(&mut self, path: &Path, scope: ExportScope) -> bool {
+        self.export_png_scope_to_path(path, scope)
+    }
+
+    #[cfg(test)]
+    fn export_png_with_scope(&mut self, path: &Path, scope: ExportScope) -> bool {
+        self.export_png_scope_to_path(path, scope)
     }
 
     fn export_png_dialog(&mut self) {
@@ -1818,17 +1934,31 @@ impl EpsilonApp {
     }
 
     fn export_svg_to_path(&mut self, path: &Path) -> bool {
-        let name = path
-            .file_name()
-            .map(|name| name.to_string_lossy().into_owned())
-            .unwrap_or_else(|| path.display().to_string());
+        let document = self.document.clone();
+        self.export_svg_document_to_path(&document, path)
+    }
+
+    fn export_svg_document_to_path(&mut self, document: &Document, path: &Path) -> bool {
         let options = ExportOptions {
             scale: ExportScale::One,
             rough: !self.clean_rendering,
             ..ExportOptions::default()
         }
-        .with_document_background(&self.document);
-        match crate::svg::export_svg(&self.document, &options) {
+        .with_document_background(document);
+        self.export_svg_document_to_path_with_options(document, path, &options)
+    }
+
+    fn export_svg_document_to_path_with_options(
+        &mut self,
+        document: &Document,
+        path: &Path,
+        options: &ExportOptions,
+    ) -> bool {
+        let name = path
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_else(|| path.display().to_string());
+        match crate::svg::export_svg(document, options) {
             Ok(svg) => match write_bytes_atomically(path, svg.as_bytes()) {
                 Ok(()) => {
                     self.file_feedback = Some(FileFeedback::Saved(format!("Exported {name}")));
@@ -1843,6 +1973,62 @@ impl EpsilonApp {
             Err(error) => {
                 self.file_feedback = Some(FileFeedback::Error(format!("Export failed: {error}")));
                 false
+            }
+        }
+    }
+
+    #[cfg(test)]
+    fn export_svg_scope_to_path(&mut self, path: &Path, scope: ExportScope) -> bool {
+        let document = self.export_document_for_scope(scope);
+        self.export_svg_document_to_path(&document, path)
+    }
+
+    #[cfg(test)]
+    fn export_svg_selection_to_path(&mut self, path: &Path) -> bool {
+        self.export_svg_scope_to_path(path, ExportScope::Selection)
+    }
+
+    #[cfg(test)]
+    fn export_svg_to_path_with_scope(&mut self, path: &Path, scope: ExportScope) -> bool {
+        self.export_svg_scope_to_path(path, scope)
+    }
+
+    #[cfg(test)]
+    fn export_svg_with_scope(&mut self, path: &Path, scope: ExportScope) -> bool {
+        self.export_svg_scope_to_path(path, scope)
+    }
+
+    fn export_document_for_scope(&self, scope: ExportScope) -> Document {
+        match scope {
+            ExportScope::Document => self.document.clone(),
+            ExportScope::Selection => {
+                let mut document = Document::default();
+                document.canvas = self.document.canvas;
+                for element in &self.document.elements {
+                    if self.selected.contains(&element.id) {
+                        document.add(element.clone());
+                    }
+                }
+                document
+            }
+        }
+    }
+
+    fn export_to_path(
+        &mut self,
+        path: &Path,
+        format: ExportFormat,
+        scope: ExportScope,
+        options: ExportOptions,
+    ) -> bool {
+        let document = self.export_document_for_scope(scope);
+        let path = with_extension_if_needed(path.to_path_buf(), format.extension());
+        match format {
+            ExportFormat::Png => {
+                self.export_png_document_to_path_with_options(&document, &path, &options)
+            }
+            ExportFormat::Svg => {
+                self.export_svg_document_to_path_with_options(&document, &path, &options)
             }
         }
     }
@@ -1865,6 +2051,224 @@ impl EpsilonApp {
             return;
         };
         self.export_svg_to_path(&with_extension_if_needed(path, "svg"));
+    }
+
+    fn export_dialog(&mut self) {
+        if self.history_blocked() {
+            self.file_feedback = Some(FileFeedback::Error(
+                "Finish the current edit before exporting".to_owned(),
+            ));
+            return;
+        }
+        self.export_dialog_open = true;
+        self.export_scope = if self.selected.is_empty() {
+            ExportScope::Document
+        } else {
+            ExportScope::Selection
+        };
+        self.export_format = ExportFormat::Png;
+        self.export_scale = ExportScale::default();
+        self.export_custom_scale = String::from("2");
+        self.export_background = true;
+        self.export_filename = self
+            .file_path
+            .as_ref()
+            .and_then(|path| path.file_stem())
+            .map(|stem| format!("{}.png", stem.to_string_lossy()))
+            .unwrap_or_else(|| String::from("untitled.png"));
+        self.export_overwrite_path = None;
+    }
+
+    #[cfg(test)]
+    fn open_export_dialog(&mut self) {
+        self.export_dialog();
+    }
+
+    #[cfg(test)]
+    fn show_export_dialog(&mut self) {
+        self.export_dialog();
+    }
+
+    fn export_dialog_directory(&self) -> PathBuf {
+        self.file_path
+            .as_ref()
+            .and_then(|path| path.parent())
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")))
+    }
+
+    fn export_dialog_scale(&self) -> ExportScale {
+        match self.export_scale {
+            // The radio button stores a 1.0 placeholder while the text field owns
+            // the value; any other factor was set programmatically and wins.
+            ExportScale::Custom(factor) if factor != 1.0 => ExportScale::Custom(factor),
+            ExportScale::Custom(_) => self
+                .export_custom_scale
+                .trim()
+                .parse::<f32>()
+                .map(ExportScale::Custom)
+                .unwrap_or(self.export_scale),
+            other => other,
+        }
+    }
+
+    fn export_dialog_options(&self) -> ExportOptions {
+        let background = if self.export_background {
+            Some(self.document.canvas.background)
+        } else {
+            None
+        };
+        ExportOptions {
+            scale: self.export_dialog_scale(),
+            background,
+            rough: !self.clean_rendering,
+        }
+    }
+
+    fn request_export_from_dialog(&mut self) -> bool {
+        if let ExportScale::Custom(factor) = self.export_scale
+            && factor == 1.0
+            && self.export_custom_scale.trim().parse::<f32>().is_err()
+        {
+            self.file_feedback = Some(FileFeedback::Error(
+                "Custom export scale must be a number".to_owned(),
+            ));
+            return false;
+        }
+        let filename = if self.export_filename.trim().is_empty() {
+            format!("untitled.{}", self.export_format.extension())
+        } else {
+            self.export_filename.trim().to_owned()
+        };
+        let path = self
+            .export_dialog_directory()
+            .join(filename)
+            .with_extension(self.export_format.extension());
+        if path.exists() && self.export_overwrite_path.as_ref() != Some(&path) {
+            self.export_overwrite_path = Some(path);
+            return false;
+        }
+        self.export_overwrite_path = None;
+        let options = self.export_dialog_options();
+        let success = self.export_to_path(&path, self.export_format, self.export_scope, options);
+        if success {
+            self.export_dialog_open = false;
+        }
+        success
+    }
+
+    fn confirm_export_overwrite(&mut self) -> bool {
+        let Some(path) = self.export_overwrite_path.take() else {
+            return false;
+        };
+        let options = self.export_dialog_options();
+        let success = self.export_to_path(&path, self.export_format, self.export_scope, options);
+        if success {
+            self.export_dialog_open = false;
+        }
+        success
+    }
+
+    fn cancel_export_dialog(&mut self) {
+        self.export_dialog_open = false;
+        self.export_overwrite_path = None;
+    }
+
+    fn run_export_dialog(&mut self, ctx: &egui::Context) {
+        if !self.export_dialog_open {
+            return;
+        }
+        let mut open = self.export_dialog_open;
+        let mut export_requested = false;
+        let mut cancel_requested = false;
+        egui::Window::new(format!("Export {}", self.export_format.label()))
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(false)
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label("Scope:");
+                    ui.radio_value(
+                        &mut self.export_scope,
+                        ExportScope::Document,
+                        "Entire canvas",
+                    );
+                    ui.add_enabled_ui(!self.selected.is_empty(), |ui| {
+                        ui.radio_value(&mut self.export_scope, ExportScope::Selection, "Selection");
+                    });
+                });
+                ui.horizontal(|ui| {
+                    ui.label("Format:");
+                    ui.radio_value(&mut self.export_format, ExportFormat::Png, "PNG");
+                    ui.radio_value(&mut self.export_format, ExportFormat::Svg, "SVG");
+                });
+                ui.horizontal(|ui| {
+                    ui.label("Scale:");
+                    for (label, scale) in [
+                        ("1×", ExportScale::One),
+                        ("2×", ExportScale::Two),
+                        ("4×", ExportScale::Four),
+                    ] {
+                        ui.radio_value(&mut self.export_scale, scale, label);
+                    }
+                    ui.radio_value(&mut self.export_scale, ExportScale::Custom(1.0), "Custom");
+                });
+                if matches!(self.export_scale, ExportScale::Custom(_)) {
+                    ui.horizontal(|ui| {
+                        ui.label("Custom scale:");
+                        ui.text_edit_singleline(&mut self.export_custom_scale);
+                    });
+                }
+                ui.checkbox(&mut self.export_background, "Document background");
+                ui.horizontal(|ui| {
+                    ui.label("Filename:");
+                    ui.text_edit_singleline(&mut self.export_filename);
+                });
+                ui.horizontal(|ui| {
+                    if ui.button("Export").clicked() {
+                        export_requested = true;
+                    }
+                    if ui.button("Cancel").clicked() {
+                        cancel_requested = true;
+                    }
+                });
+            });
+        self.export_dialog_open = open;
+        if !self.export_dialog_open {
+            self.export_overwrite_path = None;
+        }
+        if cancel_requested {
+            self.cancel_export_dialog();
+            return;
+        }
+        if export_requested {
+            self.request_export_from_dialog();
+        }
+    }
+
+    fn export_overwrite_window(&mut self, ctx: &egui::Context) {
+        let Some(path) = self.export_overwrite_path.clone() else {
+            return;
+        };
+        let mut open = true;
+        egui::Window::new("Overwrite file?")
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(false)
+            .show(ctx, |ui| {
+                ui.label(format!("{} already exists. Overwrite?", path.display()));
+                ui.horizontal(|ui| {
+                    if ui.button("Overwrite").clicked() {
+                        self.confirm_export_overwrite();
+                    }
+                    if ui.button("Cancel").clicked() {
+                        self.export_overwrite_path = None;
+                    }
+                });
+            });
+        if !open {
+            self.export_overwrite_path = None;
+        }
     }
 
     fn request_open_document(&mut self) {
@@ -2462,6 +2866,10 @@ impl EpsilonApp {
                         }
                         if ui.button("Export Excalidraw…").clicked() {
                             self.export_excalidraw_dialog();
+                            ui.close();
+                        }
+                        if ui.button("Export…").clicked() {
+                            self.export_dialog();
                             ui.close();
                         }
                         if ui.button("Export PNG…").clicked() {
@@ -4652,6 +5060,8 @@ impl eframe::App for EpsilonApp {
         self.unsaved_changes_window(ui.ctx());
         self.about_window(ui.ctx());
         self.help_window(ui.ctx());
+        self.run_export_dialog(ui.ctx());
+        self.export_overwrite_window(ui.ctx());
     }
 
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
@@ -6348,6 +6758,197 @@ mod tests {
         ));
 
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn exporting_a_selection_omits_unselected_elements() {
+        let dir = file_test_dir("export-selection");
+        let selection_path = dir.join("selection.png");
+        let full_path = dir.join("full.png");
+        let mut app = selection_app();
+        app.selected = HashSet::from([app.document.elements[0].id]);
+
+        assert!(app.export_png_selection_to_path(&selection_path));
+        let selection = tiny_skia::Pixmap::decode_png(
+            &std::fs::read(&selection_path).expect("read selection PNG"),
+        )
+        .expect("decode selection PNG");
+        assert_eq!((selection.width(), selection.height()), (54, 64));
+
+        assert!(app.export_png_to_path_with_scope(&full_path, ExportScope::Document));
+        let full =
+            tiny_skia::Pixmap::decode_png(&std::fs::read(&full_path).expect("read full PNG"))
+                .expect("decode full PNG");
+        assert_eq!((full.width(), full.height()), (144, 64));
+        let alias_path = dir.join("full-alias.png");
+        assert!(app.export_png_with_scope(&alias_path, ExportScope::Document));
+        assert!(alias_path.exists());
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn exporting_a_selected_svg_uses_only_its_bounds() {
+        let dir = file_test_dir("export-selection-svg");
+        let path = dir.join("selection.svg");
+        let mut app = selection_app();
+        app.selected = HashSet::from([app.document.elements[1].id]);
+
+        assert!(app.export_svg_selection_to_path(&path));
+        let svg = std::fs::read_to_string(&path).expect("read SVG selection");
+        assert!(svg.contains("<ellipse"), "selection keeps the ellipse");
+        assert!(
+            svg.contains(r#"viewBox="98.000000 18.000000 54.000000 64.000000""#),
+            "selection crop should cover only the ellipse: {svg}"
+        );
+        assert!(app.export_svg_to_path_with_scope(&path, ExportScope::Selection));
+        assert!(app.export_svg_with_scope(&path, ExportScope::Selection));
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn export_dialog_applies_scale_and_reports_empty_selection() {
+        let dir = file_test_dir("export-dialog-scale");
+        let path = dir.join("scaled.png");
+        let mut app = selection_app();
+        app.file_path = Some(dir.join("scene.epsilon"));
+        app.open_export_dialog();
+        app.export_scope = ExportScope::Document;
+        app.export_scale = ExportScale::Two;
+        app.export_filename = "scaled.png".to_owned();
+
+        assert!(app.request_export_from_dialog());
+        assert!(!app.export_dialog_open);
+        let decoded = tiny_skia::Pixmap::decode_png(&std::fs::read(&path).expect("read PNG"))
+            .expect("decode PNG");
+        assert_eq!((decoded.width(), decoded.height()), (286, 126));
+
+        app.selected.clear();
+        app.show_export_dialog();
+        app.export_scope = ExportScope::Selection;
+        app.export_scale = ExportScale::One;
+        app.export_filename = "empty.png".to_owned();
+        assert!(!app.request_export_from_dialog());
+        assert!(matches!(
+            app.file_feedback,
+            Some(FileFeedback::Error(ref message)) if message.contains("nothing to export")
+        ));
+        assert!(!dir.join("empty.png").exists());
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn export_dialog_rejects_invalid_custom_scale() {
+        let mut app = selection_app();
+        app.export_dialog();
+        // The radio button stores the 1.0 placeholder; the text field is the
+        // editable value in that state.
+        app.export_scale = ExportScale::Custom(1.0);
+        app.export_custom_scale = "not a number".to_owned();
+
+        assert!(!app.request_export_from_dialog());
+        assert!(matches!(
+            app.file_feedback,
+            Some(FileFeedback::Error(ref message)) if message.contains("scale")
+        ));
+        assert!(app.export_dialog_open, "dialog stays open for correction");
+    }
+
+    #[test]
+    fn export_dialog_asks_before_overwriting_and_cancel_is_safe() {
+        let dir = file_test_dir("export-overwrite");
+        let path = dir.join("scene.png");
+        std::fs::write(&path, b"old bytes").expect("seed existing file");
+
+        let mut app = selection_app();
+        app.file_path = Some(dir.join("document.epsilon"));
+        app.export_dialog();
+        app.export_scope = ExportScope::Document;
+        app.export_filename = "scene.png".to_owned();
+
+        assert!(!app.request_export_from_dialog());
+        assert_eq!(app.export_overwrite_path.as_deref(), Some(path.as_path()));
+        assert_eq!(std::fs::read(&path).expect("unchanged"), b"old bytes");
+        assert!(app.export_dialog_open);
+
+        app.cancel_export_dialog();
+        assert!(!app.export_dialog_open);
+        assert_eq!(std::fs::read(&path).expect("still unchanged"), b"old bytes");
+
+        app.export_dialog();
+        app.export_scope = ExportScope::Document;
+        app.export_filename = "scene.png".to_owned();
+        assert!(!app.request_export_from_dialog());
+        assert!(app.confirm_export_overwrite());
+        assert!(!app.export_dialog_open);
+        let bytes = std::fs::read(&path).expect("read overwritten PNG");
+        assert_eq!(&bytes[..8], b"\x89PNG\r\n\x1a\n");
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn export_scope_helpers_match_the_dialog_options() {
+        let mut app = selection_app();
+        let selection = app.export_document_for_scope(ExportScope::Selection);
+        assert_eq!(selection.elements.len(), 2);
+        app.selected = HashSet::from([app.document.elements[0].id]);
+        let selection = app.export_document_for_scope(ExportScope::Selection);
+        assert_eq!(selection.elements.len(), 1);
+        assert_eq!(selection.elements[0].id, app.document.elements[0].id);
+        assert_eq!(
+            app.export_document_for_scope(ExportScope::Document)
+                .elements
+                .len(),
+            2
+        );
+
+        app.export_dialog();
+        assert_eq!(app.export_scope, ExportScope::Selection);
+        app.export_scale = ExportScale::Custom(1.5);
+        app.export_custom_scale = "1.5".to_owned();
+        assert_eq!(app.export_dialog_scale(), ExportScale::Custom(1.5));
+        assert_eq!(app.export_dialog_options().scale, ExportScale::Custom(1.5));
+    }
+
+    #[test]
+    fn export_alias_helpers_cover_selection_formats() {
+        let dir = file_test_dir("export-aliases");
+        let mut app = selection_app();
+        app.selected = HashSet::from([app.document.elements[0].id]);
+
+        assert!(app.export_selection_to_path(&dir.join("a"), ExportFormat::Png));
+        assert!(app.export_selected_to_path(&dir.join("b"), ExportFormat::Svg));
+        assert!(app.export_png_selected_to_path(&dir.join("c.png")));
+        assert!(app.export_selected_png_to_path(&dir.join("d.png")));
+        assert!(app.export_svg_selected_to_path(&dir.join("e.svg")));
+        assert!(app.export_selected_svg_to_path(&dir.join("f.svg")));
+        for name in ["a.png", "b.svg", "c.png", "d.png", "e.svg", "f.svg"] {
+            assert!(dir.join(name).exists(), "{name} should exist");
+        }
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn export_dialog_renders_in_a_headless_frame() {
+        let ctx = egui::Context::default();
+        theme::apply(&ctx, Theme::Dark);
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1000.0, 700.0));
+        let mut app = selection_app();
+        app.export_dialog();
+
+        let output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(screen),
+                ..Default::default()
+            },
+            |ui| app.run_export_dialog(ui.ctx()),
+        );
+        output.drop_without_applying_deltas();
+        assert!(app.export_dialog_open);
     }
 
     #[test]
