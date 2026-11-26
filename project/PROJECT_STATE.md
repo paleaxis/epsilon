@@ -1,9 +1,9 @@
 # Project State
 
 Last updated: 2026-11-26
-Current stage: **Stage 5 — Documents and persistence**
-Last completed task: **5.7 — Excalidraw export**
-Next task: **5.8 — Compatibility test suite**
+Current stage: **Stage 5 — Documents and persistence** (complete)
+Last completed task: **5.8 — Compatibility test suite**
+Next task: **6.1 — Raster export backend decision and spike**
 
 ## Status
 
@@ -46,6 +46,9 @@ File menu and welcome panel, and missing entries are removed on open attempt.
 Excalidraw scenes can be imported from File → Import Excalidraw and exported
 from File → Export Excalidraw; unsupported element types are skipped with a
 status warning, and unknown element/envelope fields are preserved for re-export.
+A fixture-based compatibility suite covers supported scenes, unknown fields and
+types, future Excalidraw versions, malformed JSON and native future-version
+rejection.
 
 Repository layout:
 
@@ -61,6 +64,8 @@ crates/epsilon-core/        UI-independent engine (no egui dependency)
   src/recovery.rs           rotating autosaves, naming/retention/fallback + 5 tests
   src/recent.rs             bounded recent paths, dedup/prune/serde + 3 tests
   src/excalidraw.rs         Excalidraw import/export, extras preservation + 6 tests
+  tests/excalidraw_compat.rs fixture compatibility suite + 5 tests
+  tests/fixtures/           scene, future-version and malformed Excalidraw files
   src/history.rs            reversible commands, transactions, bounded undo/redo + 9 tests
   src/clipboard.rs          clipboard JSON payload, paste preparation, group-ID refresh + 7 tests
 crates/epsilon-app/         eframe desktop shell
@@ -144,23 +149,22 @@ Other shell behavior:
   `Context::egui_wants_keyboard_input()`; `cc.storage` is a field.
 - Remote: `origin git@github.com/paleaxis/epsilon.git`, branch `main`.
 
-## Verified commands and results (tasks 5.6–5.7)
+## Verified commands and results (task 5.8)
 
 | Command | Result |
 | --- | --- |
 | `cargo fmt --all -- --check` | exit 0 |
 | `cargo clippy --workspace --all-targets -- -D warnings` | exit 0 |
-| `cargo test --workspace` | **208 passed, 0 failed** (104 app, 104 core) |
+| `cargo test --workspace` | **213 passed, 0 failed** (104 app, 104 core, 5 integration) |
 | `cargo build --workspace` | success, no warnings |
 | `timeout 8 ./target/debug/epsilon` | exit 124 (alive, no stderr) |
 
-Tasks 5.6–5.7 add core tests for importing rectangles/lines/text, colors,
-opacity, groups, text alignment, app-state zoom/grid/background, skipping
-unknown element types with warnings, preserving per-element customData and
-envelope/app-state extras on export, re-importing exported JSON, malformed
-inputs, short linear elements and color formats. App tests cover import
-replacement/warnings, import through the unsaved guard and exported scenes on
-disk. The suite also retains all earlier Stage 5 and Stage 4 coverage.
+Task 5.8 adds an integration suite under `crates/epsilon-core/tests` with
+fixtures for a supported scene, a future Excalidraw version and malformed JSON.
+It verifies element mapping, skipped type warnings, view state, preserved
+custom/unknown fields and files on export, re-import, future additive content,
+malformed rejection and native future schema rejection. The suite also retains
+all Stage 5 core/app tests and all Stage 4 and earlier coverage.
 
 Native launch was verified by process liveness. Import/export was exercised
 through core and app path methods; the native dialogs were not clicked, and an
@@ -240,6 +244,8 @@ fully mapped.
 - Excalidraw export with required envelope/app-state fields, relative line
   points, preserved custom/unknown fields and atomic writes; import/export menu
   entries using native dialogs.
+- Fixture-based Excalidraw/native compatibility suite covering supported
+  scenes, unknown fields/types, future versions and malformed inputs.
 - Persisted theme/tool; eframe-persisted window geometry and panel widths.
 - Tool palette with shortcuts, painted icons and accessible names.
 - Dark/light themes with central palette and contrast tests.
@@ -273,8 +279,10 @@ automation allowed). Items requiring a human reviewer:
 - Edit contains Undo/Redo, Cut/Copy/Paste, Select All, Duplicate, Delete, Group,
   Ungroup, Order and the Arrange alignment/distribution submenu. File has
   New/Open/Open Recent/Save/Save As, Excalidraw Import/Export and Quit with the
-  unsaved-changes guard. Excalidraw images/frames/bindings are not mapped yet,
-  and the compatibility fixture suite (5.8) remains.
+  unsaved-changes guard. Excalidraw images/frames/bindings are not mapped yet.
+- Stage 5 is complete; Stage 6 (PNG/SVG/clipboard export) is next. Manual
+  acceptance remains for opening an export in Excalidraw and clicking native
+  dialogs/menus.
 - Arrange commands have no keyboard shortcuts; they are available only from the
   Edit menu, and the menu itself was not clicked in a live window.
 - Z-order moves rewrite paint slots densely (0..n), so elements whose slot
@@ -297,7 +305,8 @@ automation allowed). Items requiring a human reviewer:
 
 1. Read `AGENTS.md`, `project/ROADMAP.md`, this file, `project/DECISIONS.md`.
 2. `git status` must be clean; run `cargo test --workspace` for the baseline.
-3. Start with the first incomplete task, 5.8 — Compatibility test suite.
+3. Start with the first incomplete task, 6.1 — Raster export backend decision
+   and spike.
 4. Verify format, clippy, tests, build, and `timeout 8 ./target/debug/epsilon`.
 5. Update this file, `ROADMAP.md`, `CHANGELOG.md`, then commit and push.
 

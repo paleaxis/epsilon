@@ -1039,3 +1039,25 @@ content without new dependencies. Bindings, frames, image rendering and some
 Excalidraw-specific fields are not modelled; opening an export in Excalidraw
 remains the manual acceptance check. Fixture-based compatibility coverage is
 task 5.8.
+
+---
+
+## D-051 — Compatibility fixtures live under core integration tests and cover additive future data (2026-11-26)
+
+**Context.** Task 5.8 requires repeatable compatibility coverage with fixtures,
+malformed inputs and version handling, independent of the unit-test module.
+
+**Decision.** Keep `.excalidraw` fixtures under
+`crates/epsilon-core/tests/fixtures` and exercise the public `excalidraw` and
+`format` APIs from `tests/excalidraw_compat.rs`. `scene.excalidraw` covers every
+supported element kind plus a deliberately unsupported type and unknown
+element/app-state/envelope/files data. `future.excalidraw` uses Excalidraw
+version 3 with additive fields to prove known content imports while extras and
+unknown types are handled; `malformed.excalidraw` proves invalid JSON is
+rejected. A separate assertion keeps native `.epsilon` future-schema rejection
+in the same suite.
+
+**Consequences.** Interop behavior is pinned to files that can be extended
+without touching test code, and `cargo test --workspace` runs the suite locally.
+The Excalidraw fixture does not replace the manual check of opening an export in
+the actual Excalidraw application.

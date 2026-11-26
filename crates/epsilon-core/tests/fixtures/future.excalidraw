@@ -1,0 +1,30 @@
+{
+  "type": "excalidraw",
+  "version": 3,
+  "source": "future-excalidraw",
+  "elements": [
+    {
+      "id": "future-rectangle",
+      "type": "rectangle",
+      "x": 5,
+      "y": 10,
+      "width": 50,
+      "height": 25,
+      "strokeColor": "#000000",
+      "backgroundColor": "#ffffff",
+      "seed": 1,
+      "version": 1,
+      "futureElementField": "preserved"
+    },
+    {
+      "id": "future-unknown",
+      "type": "future-shape",
+      "x": 0,
+      "y": 0
+    }
+  ],
+  "appState": {
+    "zoom": 1
+  },
+  "futureTopLevel": [1, 2, 3]
+}

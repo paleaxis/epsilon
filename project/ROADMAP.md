@@ -603,8 +603,9 @@ the native document format.
 
 ## Stage 5 — Documents and persistence
 
-The native v1 serialization envelope is in place; save/open and the remaining
-document lifecycle tasks follow.
+Stage 5 is complete: native format v1, atomic save/open, New/Save As/close guard,
+autosave/crash recovery, recent documents, Excalidraw import/export and a
+fixture-based compatibility suite are implemented and verified.
 
 ### [x] 5.1 — Native document format v1
 
@@ -712,12 +713,16 @@ Export Excalidraw writes atomically through the shared temp-file helper.
 Round-trip tests check required fields, IDs, groupIds, relative points and
 customData. Opening an export in the real Excalidraw app remains a manual check.
 
-### [ ] 5.8 — Compatibility test suite
+### [x] 5.8 — Compatibility test suite
 
 Fixture-based import/export/round-trip tests, malformed inputs, version handling.
 
-Acceptance: suite passes in CI-local `cargo test`; fixtures stored under
-`crates/epsilon-core/tests/fixtures`.
+Completed 2026-11-26: `crates/epsilon-core/tests/excalidraw_compat.rs` runs
+against `tests/fixtures/scene.excalidraw`, `future.excalidraw` and
+`malformed.excalidraw`. Tests cover the supported element subset, unknown type
+warnings, view state, export required fields, preserved custom/envelope/
+app-state/files data, re-import, future additive Excalidraw content, malformed
+JSON and native future-schema rejection. The full workspace suite passes.
 
 ---
 

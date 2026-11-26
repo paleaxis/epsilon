@@ -4,6 +4,12 @@ Notable changes, newest first. Version sections are added at release time.
 
 ## [Unreleased]
 
+### Added — 2026-11-26 (task 5.8)
+
+- Fixture-based Excalidraw compatibility suite covering supported scenes,
+  unknown fields/types, future versions, malformed JSON and native version
+  rejection.
+
 ### Added — 2026-11-26 (tasks 5.6–5.7)
 
 - Excalidraw import/export in core for the supported element subset, including
