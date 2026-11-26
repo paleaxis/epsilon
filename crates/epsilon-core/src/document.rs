@@ -241,6 +241,9 @@ pub struct Element {
     pub seed: u64,
     /// Element revision, incremented by edits.
     pub version: u64,
+    /// Unknown serialized fields, preserved for import/export round-trips.
+    #[serde(default, flatten)]
+    pub extras: Extras,
 }
 
 impl Element {
@@ -275,6 +278,7 @@ impl Element {
             group_ids: Vec::new(),
             seed: id.get(),
             version: 1,
+            extras: Extras::new(),
         }
     }
 

@@ -4,6 +4,13 @@ Notable changes, newest first. Version sections are added at release time.
 
 ## [Unreleased]
 
+### Added — 2026-11-26 (tasks 5.6–5.7)
+
+- Excalidraw import/export in core for the supported element subset, including
+  styles, groups, points, view state and preserved unknown fields.
+- File → Import/Export Excalidraw dialogs, import warnings for skipped element
+  types, unsaved guard for import, and atomic export writes.
+
 ### Added — 2026-11-26 (task 5.5)
 
 - Persisted recent-document list (max 8) in File → Open Recent and a welcome

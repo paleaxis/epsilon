@@ -14,11 +14,12 @@
 //! - [`format`] — native `.epsilon` file envelope (Stage 5).
 //! - [`recovery`] — rotating crash-recovery autosaves (Stage 5).
 //! - [`recent`] — bounded recent-document paths (Stage 5).
-//! - `io` — Excalidraw import/export (Stage 5, later).
+//! - [`excalidraw`] — Excalidraw import/export with preserved extras (Stage 5).
 //! - `export` — PNG/SVG export (Stage 6).
 
 pub mod clipboard;
 pub mod document;
+pub mod excalidraw;
 pub mod format;
 pub mod geometry;
 pub mod grid;

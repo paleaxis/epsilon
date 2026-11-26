@@ -1010,3 +1010,32 @@ introduced; missing files are handled on interaction.
 and persistence reuses the existing eframe settings path. Stale entries remain
 visible until clicked or explicitly cleared, which avoids blocking startup on
 network/slow filesystems.
+
+---
+
+## D-050 — Excalidraw interop maps known fields and preserves everything else verbatim (2026-11-26)
+
+**Context.** Tasks 5.6–5.7 need bidirectional Excalidraw support without
+committing to a full schema, while not discarding data Epsilon does not model.
+
+**Decision.** Core `excalidraw` reads the envelope with `serde_json::Value` and
+manually maps the supported element subset (rectangle, ellipse, diamond, line,
+arrow, freedraw, text) and appState keys (zoom, scroll, gridSize,
+viewBackgroundColor). Mapped geometry/styles/text/groups replace Epsilon
+fields, while unknown per-element fields are stored in `Element.extras`;
+original Excalidraw string IDs are kept under `excalidraw_id`; unknown
+appState/envelope fields and the `files` map are stored under document extras
+keys. Export starts from those extras and overwrites the known fields, so
+unsupported data survives round-trips. Element IDs are regenerated on import
+because Epsilon IDs are numeric. Unknown element types and malformed individual
+elements produce warnings and are skipped; invalid JSON, non-objects and a
+missing/non-array `elements` field are errors. Import replaces the document as
+unsaved work and uses the shared unsaved guard; export uses the same atomic
+temp-file-plus-rename helper as native saves. PNG/image files are preserved as
+JSON but not rendered.
+
+**Consequences.** Interop is forward-compatible and robust to unknown scene
+content without new dependencies. Bindings, frames, image rendering and some
+Excalidraw-specific fields are not modelled; opening an export in Excalidraw
+remains the manual acceptance check. Fixture-based compatibility coverage is
+task 5.8.

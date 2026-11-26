@@ -2,8 +2,8 @@
 
 Last updated: 2026-11-26
 Current stage: **Stage 5 — Documents and persistence**
-Last completed task: **5.5 — Recent documents**
-Next task: **5.6 — Excalidraw import**
+Last completed task: **5.7 — Excalidraw export**
+Next task: **5.8 — Compatibility test suite**
 
 ## Status
 
@@ -43,6 +43,9 @@ directory under the app data folder; launch offers the newest valid autosave
 for recovery, and normal save/open/new/discard removes recovery files. Recent
 documents are recorded on save/open, persisted with app settings, listed in the
 File menu and welcome panel, and missing entries are removed on open attempt.
+Excalidraw scenes can be imported from File → Import Excalidraw and exported
+from File → Export Excalidraw; unsupported element types are skipped with a
+status warning, and unknown element/envelope fields are preserved for re-export.
 
 Repository layout:
 
@@ -57,6 +60,7 @@ crates/epsilon-core/        UI-independent engine (no egui dependency)
   src/format.rs             native .epsilon v1 envelope, atomic file I/O, extras + 6 tests
   src/recovery.rs           rotating autosaves, naming/retention/fallback + 5 tests
   src/recent.rs             bounded recent paths, dedup/prune/serde + 3 tests
+  src/excalidraw.rs         Excalidraw import/export, extras preservation + 6 tests
   src/history.rs            reversible commands, transactions, bounded undo/redo + 9 tests
   src/clipboard.rs          clipboard JSON payload, paste preparation, group-ID refresh + 7 tests
 crates/epsilon-app/         eframe desktop shell
@@ -140,25 +144,29 @@ Other shell behavior:
   `Context::egui_wants_keyboard_input()`; `cc.storage` is a field.
 - Remote: `origin git@github.com/paleaxis/epsilon.git`, branch `main`.
 
-## Verified commands and results (task 5.5)
+## Verified commands and results (tasks 5.6–5.7)
 
 | Command | Result |
 | --- | --- |
 | `cargo fmt --all -- --check` | exit 0 |
 | `cargo clippy --workspace --all-targets -- -D warnings` | exit 0 |
-| `cargo test --workspace` | **199 passed, 0 failed** (101 app, 98 core) |
+| `cargo test --workspace` | **208 passed, 0 failed** (104 app, 104 core) |
 | `cargo build --workspace` | success, no warnings |
 | `timeout 8 ./target/debug/epsilon` | exit 124 (alive, no stderr) |
 
-Task 5.5 adds core tests for recent-path deduplication, move-to-front ordering,
-cap enforcement, remove/prune-missing and serde round-trips. App tests cover
-recording on save/open, persistence through eframe settings, missing-file
-removal with an error and unchanged scene, and recent-open honouring the
-unsaved guard. The suite also retains all earlier Stage 5 and Stage 4 coverage.
+Tasks 5.6–5.7 add core tests for importing rectangles/lines/text, colors,
+opacity, groups, text alignment, app-state zoom/grid/background, skipping
+unknown element types with warnings, preserving per-element customData and
+envelope/app-state extras on export, re-importing exported JSON, malformed
+inputs, short linear elements and color formats. App tests cover import
+replacement/warnings, import through the unsaved guard and exported scenes on
+disk. The suite also retains all earlier Stage 5 and Stage 4 coverage.
 
-Native launch was verified by process liveness. Recent lists and settings were
-exercised through app methods; the welcome panel and File → Open Recent menu
-were not clicked in a live window.
+Native launch was verified by process liveness. Import/export was exercised
+through core and app path methods; the native dialogs were not clicked, and an
+export was not opened in the real Excalidraw application (manual acceptance
+item remains). Images/`files`, frames, bindings and arrowhead variants are not
+fully mapped.
 
 ## Features implemented
 
@@ -226,6 +234,12 @@ were not clicked in a live window.
   path restoration, and cleanup on normal save/open/new/discard/quit.
 - Persisted recent documents (max 8) shown in File → Open Recent and the welcome
   panel, with deduplication, clear-all and stale-entry removal on open.
+- Excalidraw import for rectangles, ellipses, diamonds, lines, arrows, freehand
+  and text, including styles, groups, points, zoom/grid/background, with
+  warnings for unsupported types.
+- Excalidraw export with required envelope/app-state fields, relative line
+  points, preserved custom/unknown fields and atomic writes; import/export menu
+  entries using native dialogs.
 - Persisted theme/tool; eframe-persisted window geometry and panel widths.
 - Tool palette with shortcuts, painted icons and accessible names.
 - Dark/light themes with central palette and contrast tests.
@@ -258,8 +272,9 @@ automation allowed). Items requiring a human reviewer:
 
 - Edit contains Undo/Redo, Cut/Copy/Paste, Select All, Duplicate, Delete, Group,
   Ungroup, Order and the Arrange alignment/distribution submenu. File has
-  New/Open/Open Recent/Save/Save As and Quit with the unsaved-changes guard;
-  Excalidraw import/export arrives in tasks 5.6–5.8.
+  New/Open/Open Recent/Save/Save As, Excalidraw Import/Export and Quit with the
+  unsaved-changes guard. Excalidraw images/frames/bindings are not mapped yet,
+  and the compatibility fixture suite (5.8) remains.
 - Arrange commands have no keyboard shortcuts; they are available only from the
   Edit menu, and the menu itself was not clicked in a live window.
 - Z-order moves rewrite paint slots densely (0..n), so elements whose slot
@@ -282,7 +297,7 @@ automation allowed). Items requiring a human reviewer:
 
 1. Read `AGENTS.md`, `project/ROADMAP.md`, this file, `project/DECISIONS.md`.
 2. `git status` must be clean; run `cargo test --workspace` for the baseline.
-3. Start with the first incomplete task, 5.6 — Excalidraw import.
+3. Start with the first incomplete task, 5.8 — Compatibility test suite.
 4. Verify format, clippy, tests, build, and `timeout 8 ./target/debug/epsilon`.
 5. Update this file, `ROADMAP.md`, `CHANGELOG.md`, then commit and push.
 

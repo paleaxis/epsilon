@@ -9,6 +9,7 @@ use epsilon_core::document::{
     Align as ElementAlign, Color as DocumentColor, Distribute as ElementDistribute, Document,
     Element, ElementId, ElementKind, FillStyle, StrokeStyle, TextAlign, ZOrderMove,
 };
+use epsilon_core::excalidraw;
 use epsilon_core::format::{EpsilonFile, FILE_EXTENSION};
 use epsilon_core::geometry::{
     Point, Rect, ResizeHandle, arrowhead_points, constrain_angle, resize_rect, rotate_point,
@@ -551,6 +552,7 @@ enum FileFeedback {
 enum PendingAction {
     New,
     Open(Option<PathBuf>),
+    Import(PathBuf),
     Quit,
 }
 
@@ -1659,6 +1661,107 @@ impl EpsilonApp {
         self.file_feedback = Some(FileFeedback::New("New document".to_owned()));
     }
 
+    /// Imports an Excalidraw scene as a new unsaved document. Unsupported
+    /// element types are reported as warnings without aborting the import.
+    fn import_excalidraw_from_path(&mut self, path: &Path) -> bool {
+        let name = path
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_else(|| path.display().to_string());
+        match excalidraw::import_from_path(path) {
+            Ok(imported) => {
+                let count = imported.document.elements.len();
+                let skipped = imported.warnings.len();
+                self.document = imported.document;
+                self.viewport = imported.viewport;
+                self.viewport.set_zoom(self.viewport.zoom);
+                self.history.clear();
+                self.history_error = None;
+                self.property_edit_before = None;
+                self.pointer_mode = PointerMode::Idle;
+                self.transform_original.clear();
+                self.selected.clear();
+                self.editing_text = None;
+                self.editing_text_is_new = false;
+                self.text_buffer.clear();
+                self.text_editor_needs_focus = false;
+                self.paste_count = 0;
+                self.file_path = None;
+                self.saved_document = Document::new();
+                self.last_autosave = Instant::now();
+                self.discard_recovery_files();
+                self.file_feedback = Some(FileFeedback::New(if skipped == 0 {
+                    format!("Imported {count} elements from {name}")
+                } else {
+                    format!("Imported {count} elements from {name} ({skipped} unsupported skipped)")
+                }));
+                true
+            }
+            Err(error) => {
+                self.file_feedback = Some(FileFeedback::Error(format!("Import failed: {error}")));
+                false
+            }
+        }
+    }
+
+    fn request_import_excalidraw(&mut self) {
+        if self.history_blocked() {
+            self.file_feedback = Some(FileFeedback::Error(
+                "Finish the current edit before importing a file".to_owned(),
+            ));
+            return;
+        }
+        let Some(path) = rfd::FileDialog::new()
+            .add_filter("Excalidraw scene", &["excalidraw", "json"])
+            .set_title("Import Excalidraw scene")
+            .pick_file()
+        else {
+            return;
+        };
+        if self.is_dirty() {
+            self.pending_action = Some(PendingAction::Import(path));
+        } else {
+            self.import_excalidraw_from_path(&path);
+        }
+    }
+
+    fn export_excalidraw_to_path(&mut self, path: &Path) -> bool {
+        let name = path
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_else(|| path.display().to_string());
+        match excalidraw::export_to_path(&self.document, &self.viewport, path) {
+            Ok(()) => {
+                self.file_feedback = Some(FileFeedback::Saved(format!("Exported {name}")));
+                true
+            }
+            Err(error) => {
+                self.file_feedback = Some(FileFeedback::Error(format!("Export failed: {error}")));
+                false
+            }
+        }
+    }
+
+    fn export_excalidraw_dialog(&mut self) {
+        if self.history_blocked() {
+            self.file_feedback = Some(FileFeedback::Error(
+                "Finish the current edit before exporting".to_owned(),
+            ));
+            return;
+        }
+        let mut dialog = rfd::FileDialog::new()
+            .add_filter("Excalidraw scene", &["excalidraw"])
+            .set_title("Export Excalidraw scene")
+            .set_file_name("untitled.excalidraw");
+        if let Some(parent) = self.file_path.as_ref().and_then(|path| path.parent()) {
+            dialog = dialog.set_directory(parent);
+        }
+        let Some(path) = dialog.save_file() else {
+            return;
+        };
+        self.export_excalidraw_to_path(&with_extension_if_needed(path, "excalidraw"));
+    }
+
     fn request_open_document(&mut self) {
         if self.history_blocked() {
             self.file_feedback = Some(FileFeedback::Error(
@@ -1769,6 +1872,9 @@ impl EpsilonApp {
             PendingAction::Open(None) => self.open_document_dialog(),
             PendingAction::Open(Some(path)) => {
                 self.open_from_path(&path);
+            }
+            PendingAction::Import(path) => {
+                self.import_excalidraw_from_path(&path);
             }
             PendingAction::Quit => {
                 self.allow_close = true;
@@ -2242,6 +2348,15 @@ impl EpsilonApp {
                             .clicked()
                         {
                             self.save_document_as();
+                            ui.close();
+                        }
+                        ui.separator();
+                        if ui.button("Import Excalidraw…").clicked() {
+                            self.request_import_excalidraw();
+                            ui.close();
+                        }
+                        if ui.button("Export Excalidraw…").clicked() {
+                            self.export_excalidraw_dialog();
                             ui.close();
                         }
                         if !self.recent.is_empty() {
@@ -4358,13 +4473,17 @@ impl EpsilonApp {
 
 /// Appends the native extension when the chosen name has none or a different
 /// one, matching common Save-As behaviour.
-fn with_document_extension(mut path: PathBuf) -> PathBuf {
+fn with_document_extension(path: PathBuf) -> PathBuf {
+    with_extension_if_needed(path, FILE_EXTENSION)
+}
+
+fn with_extension_if_needed(mut path: PathBuf, extension: &str) -> PathBuf {
     let has_extension = path
         .extension()
         .and_then(|extension| extension.to_str())
-        .is_some_and(|extension| extension.eq_ignore_ascii_case(FILE_EXTENSION));
+        .is_some_and(|current| current.eq_ignore_ascii_case(extension));
     if !has_extension {
-        path.set_extension(FILE_EXTENSION);
+        path.set_extension(extension);
     }
     path
 }
@@ -6003,6 +6122,77 @@ mod tests {
         app.resolve_unsaved(&egui::Context::default(), UnsavedChoice::Discard);
         assert_eq!(app.document, saved_document);
         assert_eq!(app.recent.paths()[0], path);
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn excalidraw_import_replaces_the_scene_and_reports_skipped_types() {
+        let dir = file_test_dir("excalidraw-import");
+        let path = dir.join("scene.excalidraw");
+        std::fs::write(
+            &path,
+            r##"{"type":"excalidraw","version":2,"elements":[{"id":"r1","type":"rectangle","x":1,"y":2,"width":30,"height":40,"strokeColor":"#ff0000","backgroundColor":"transparent"},{"type":"embeddable","x":0,"y":0}],"appState":{}}"##,
+        )
+        .expect("write fixture");
+
+        let mut app = EpsilonApp::default();
+        assert!(app.import_excalidraw_from_path(&path));
+        assert_eq!(app.document.elements.len(), 1);
+        assert_eq!(app.document.elements[0].kind, ElementKind::Rectangle);
+        assert!(app.file_path.is_none(), "imported scenes are unsaved");
+        assert!(app.is_dirty());
+        assert_eq!(app.history.undo_len(), 0);
+        assert!(matches!(
+            app.file_feedback,
+            Some(FileFeedback::New(ref message))
+                if message.contains("1 elements") && message.contains("1 unsupported")
+        ));
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn excalidraw_import_respects_the_unsaved_guard() {
+        let dir = file_test_dir("excalidraw-guard");
+        let path = dir.join("scene.excalidraw");
+        std::fs::write(
+            &path,
+            r##"{"elements":[{"type":"ellipse","x":5,"y":5,"width":10,"height":10,"strokeColor":"#000000","backgroundColor":"transparent"}]}"##,
+        )
+        .expect("write fixture");
+
+        let mut app = selection_app();
+        app.pending_action = Some(PendingAction::Import(path.clone()));
+        app.resolve_unsaved(&egui::Context::default(), UnsavedChoice::Discard);
+        assert_eq!(app.pending_action, None);
+        assert_eq!(app.document.elements.len(), 1);
+        assert_eq!(app.document.elements[0].kind, ElementKind::Ellipse);
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn excalidraw_export_writes_a_readable_scene() {
+        let dir = file_test_dir("excalidraw-export");
+        let path = dir.join("scene.excalidraw");
+        let mut app = selection_app();
+        let expected = app.document.elements.len();
+
+        assert!(app.export_excalidraw_to_path(&path));
+        assert!(path.exists());
+        let value: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).expect("read export"))
+                .expect("parse export");
+        assert_eq!(value["type"], "excalidraw");
+        assert_eq!(
+            value["elements"].as_array().expect("elements").len(),
+            expected
+        );
+        assert!(matches!(
+            app.file_feedback,
+            Some(FileFeedback::Saved(ref message)) if message.contains("Exported")
+        ));
 
         std::fs::remove_dir_all(&dir).ok();
     }

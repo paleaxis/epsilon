@@ -685,21 +685,32 @@ touching the current scene, and recent opens use the unsaved guard. Tests cover
 dedup/cap/prune/serde, persistence, recording, guard and missing-file handling;
 the live menus/welcome panel were not clicked.
 
-### [ ] 5.6 — Excalidraw import
+### [x] 5.6 — Excalidraw import
 
 Map Excalidraw elements/appState subset into the document model; preserve
 unsupported fields for re-export; reject invalid JSON with clear messages.
 
-Acceptance: fixture files import correctly (unit tests); unknown element types
-skipped with warning, not crash; imported scene renders.
+Completed 2026-11-26: `epsilon_core::excalidraw` imports rectangles, ellipses,
+diamonds, lines, arrows, freehand and text with colors, opacity, fill/stroke
+styles, groups, points, text properties, and appState zoom/scroll/grid/
+background. Unknown element types and invalid individual elements are skipped
+with warnings; malformed JSON, non-objects and missing `elements` are explicit
+errors. Unknown element fields, original Excalidraw IDs, unknown appState and
+envelope fields and the `files` map are preserved in extras. File → Import
+Excalidraw uses native dialogs and the unsaved guard. Tests cover fixtures,
+warnings, malformed input, linear-point validation and path import.
 
-### [ ] 5.7 — Excalidraw export
+### [x] 5.7 — Excalidraw export
 
 Export scene as `.excalidraw` JSON with required fields and compatible element
 properties.
 
-Acceptance: exported file opens in Excalidraw (manual check); schema-required
-fields covered by tests.
+Completed 2026-11-26: export writes the `type/version/source/elements/appState/
+files` envelope with base element fields, type-specific text/linear fields,
+relative points, colors, styles, groups, opacity and preserved extras. File →
+Export Excalidraw writes atomically through the shared temp-file helper.
+Round-trip tests check required fields, IDs, groupIds, relative points and
+customData. Opening an export in the real Excalidraw app remains a manual check.
 
 ### [ ] 5.8 — Compatibility test suite
 

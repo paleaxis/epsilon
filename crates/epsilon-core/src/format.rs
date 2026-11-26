@@ -79,21 +79,7 @@ impl EpsilonFile {
     /// untouched.
     pub fn save_to_path(&self, path: &Path) -> Result<(), FileError> {
         let json = self.to_json()?;
-        let temp = temporary_path(path);
-        let result = (|| -> std::io::Result<()> {
-            let mut file = File::create(&temp)?;
-            file.write_all(json.as_bytes())?;
-            file.sync_all()?;
-            drop(file);
-            std::fs::rename(&temp, path)
-        })();
-        if let Err(error) = result {
-            // The destination was not touched; remove the partial temp file
-            // best-effort without hiding the original I/O error.
-            let _ = std::fs::remove_file(&temp);
-            return Err(FileError::Io(error));
-        }
-        Ok(())
+        write_json_atomically(path, &json)
     }
 
     /// Reads and validates a native document file.
@@ -194,6 +180,26 @@ impl fmt::Display for FileError {
             ),
         }
     }
+}
+
+/// Writes JSON atomically via a synced sibling temp file and rename, shared by
+/// the native and Excalidraw exporters.
+pub fn write_json_atomically(path: &Path, json: &str) -> Result<(), FileError> {
+    let temp = temporary_path(path);
+    let result = (|| -> std::io::Result<()> {
+        let mut file = File::create(&temp)?;
+        file.write_all(json.as_bytes())?;
+        file.sync_all()?;
+        drop(file);
+        std::fs::rename(&temp, path)
+    })();
+    if let Err(error) = result {
+        // The destination was not touched; remove the partial temp file
+        // best-effort without hiding the original I/O error.
+        let _ = std::fs::remove_file(&temp);
+        return Err(FileError::Io(error));
+    }
+    Ok(())
 }
 
 /// A hidden sibling of `path`, keeping the rename on the same filesystem.
