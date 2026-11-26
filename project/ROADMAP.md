@@ -524,12 +524,22 @@ Ctrl+] / Ctrl+[ / Ctrl+Shift+[ plus an Edit → Order submenu. Core tests cover
 ordering and no-ops; app tests cover shortcuts, selection preservation, exact
 undo/redo and history depth.
 
-### [ ] 4.6 — Context menus
+### [x] 4.6 — Context menus
 
 Right-click menu with applicable element/selection/canvas actions.
 
 Acceptance: only valid actions shown; menu actions match shortcuts; no menu in
 text-editing mode.
+
+Completed 2026-11-26: right-click selects the element under the pointer (or
+keeps an existing multi-selection it belongs to) and clears the selection on
+empty canvas. The container context menu is built only from an action list
+filtered for the target: selection menus offer Cut/Copy/Paste, Duplicate,
+Delete and the four Order moves, while canvas menus offer only Paste and Select
+All when they can run. Shortcut text comes from the central registry, and no
+menu is attached while the canvas text editor is open. Tests cover
+applicability, labels/shortcut coverage and right-click targeting; interactive
+popup rendering was not manually inspected.
 
 ### [ ] 4.7 — Grouping
 

@@ -4,6 +4,14 @@ Notable changes, newest first. Version sections are added at release time.
 
 ## [Unreleased]
 
+### Added — 2026-11-26 (task 4.6)
+
+- Target-aware canvas context menu: right-click selects the element under the
+  pointer and offers Cut/Copy/Paste, Duplicate, Delete and z-order moves;
+  empty canvas offers only Paste/Select All when applicable.
+- Context menu labels use the central shortcut registry, and no menu appears
+  while canvas text is being edited.
+
 ### Added — 2026-11-26 (task 4.5)
 
 - Bring to front, bring forward, send backward and send to back for the

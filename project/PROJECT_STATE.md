@@ -2,8 +2,8 @@
 
 Last updated: 2026-11-26
 Current stage: **Stage 4 — Editing experience**
-Last completed task: **4.5 — Z-order commands**
-Next task: **4.6 — Context menus**
+Last completed task: **4.6 — Context menus**
+Next task: **4.7 — Grouping**
 
 ## Status
 
@@ -23,7 +23,8 @@ selection, Ctrl+D duplicates it one grid step away, Ctrl+A selects every
 element, and Esc clears the selection and returns to the Select tool. Bring to
 front/send to back and one-step bring forward/send backward work from shortcuts
 and the Edit → Order submenu, preserving the selection and recording one undo
-entry.
+entry. Right-clicking the canvas targets the element under the pointer and
+opens a context menu containing only the commands valid for that target.
 
 Repository layout:
 
@@ -54,13 +55,13 @@ Working UI actions:
 | View menu | Dark mode, grid and clean-rendering toggles, applied immediately |
 | Help menu | About Epsilon (dialog) |
 | Top toolbar | Wordmark, document title, undo/redo buttons, zoom buttons, theme checkbox, About button, version |
-| Canvas | Shape tools draw; Select picks/toggles/marquees, moves, resizes and rotates; text overlays edit in place; middle/space/hand drag pans; wheel zooms |
+| Canvas | Shape tools draw; Select picks/toggles/marquees, moves, resizes and rotates; text overlays edit in place; middle/space/hand drag pans; wheel zooms; right-click targets and opens a context menu |
 | Properties | Live transform/style editor with mixed values; panel hide control |
 | Status bar | Tool, pointer, zoom, grid, undo/redo depths, history/clipboard feedback, version |
 
 Only working actions are listed; Edit exposes undo, redo, cut, copy, paste,
-select all, duplicate, delete and the four z-order moves; context menus arrive
-in task 4.6. Menus and toolbar share the same action helpers (`toggle_theme`,
+select all, duplicate, delete and the four z-order moves; the canvas context
+menu shows the applicable subset. Menus and toolbar share the same action helpers (`toggle_theme`,
 `open_about`, `request_quit`, `undo`, `redo`, `cut_selection`,
 `copy_selection`, `paste_from_menu`, `select_all`, `duplicate_selection`,
 `delete_selection`, `move_selection_in_z_order`). Standard egui widgets provide
@@ -80,6 +81,12 @@ Other shell behavior:
   clears the selection and switches to the Select tool. Esc closes the help
   overlay first, and all four are ignored while a drag, property edit or canvas
   text editor is in progress.
+- Context menu: right-clicking an element selects it (unless part of the
+  current selection) and offers Cut/Copy/Paste, Duplicate, Delete and the four
+  Order moves; right-clicking empty canvas clears the selection and offers only
+  Paste/Select All when they apply. Empty action lists open no popup, and no
+  context menu is attached while a canvas text editor is open. Labels take
+  their shortcut text from the central registry.
 - Z-order: Ctrl+Shift+] brings the selection to the front, Ctrl+] moves it
   forward one slot, Ctrl+[ moves it backward and Ctrl+Shift+[ sends it to the
   back; Edit → Order exposes the same four commands. Front/back keep the
@@ -112,28 +119,29 @@ Other shell behavior:
   `Context::egui_wants_keyboard_input()`; `cc.storage` is a field.
 - Remote: `origin git@github.com/paleaxis/epsilon.git`, branch `main`.
 
-## Verified commands and results (task 4.5)
+## Verified commands and results (task 4.6)
 
 | Command | Result |
 | --- | --- |
 | `cargo fmt --all -- --check` | exit 0 |
 | `cargo clippy --workspace --all-targets -- -D warnings` | exit 0 |
-| `cargo test --workspace` | **156 passed, 0 failed** (80 app, 76 core) |
+| `cargo test --workspace` | **158 passed, 0 failed** (82 app, 76 core) |
 | `cargo build --workspace` | success, no warnings |
 | `timeout 8 ./target/debug/epsilon` | exit 124 (alive, no stderr) |
 
-Task 4.5 tests cover core front/back block moves, one-step forward/backward,
-contiguous-block movement, already-front/already-back no-ops, unknown IDs and
-all-selected no-ops, plus app-level front/send-to-back and forward/backward
-shortcuts with selection preservation, exact undo/redo, one history entry per
-effective move, no history for no-ops, and registration of all four bindings.
-The suite also retains the task 4.4 selection tests, task 4.3 clipboard tests,
+Task 4.6 adds app tests for context-menu applicability (empty canvas has no
+entries; an unselected element offers Select All; a selection offers
+Cut/Copy/Duplicate/Delete and Order but not Select All until the clipboard is
+non-empty; no entries while text is edited), label/shortcut coverage for every
+context action, and right-click targeting (select unselected element, keep an
+existing multi-selection, clear on empty canvas). The suite also retains the
+task 4.5 z-order tests, task 4.4 selection tests, task 4.3 clipboard tests,
 core history tests and all earlier shell, persistence, viewport, grid,
 document, styling, rough rendering and shape coverage.
 
-Native launch was verified by process liveness. Z-order shortcuts were exercised
-in headless egui tests; interactive menu and Order-submenu clicks were not
-manually inspected in a live window.
+Native launch was verified by process liveness. Context targets and the action
+list were exercised in headless egui tests; interactive right-click menu
+rendering and clicks were not manually inspected in a live window.
 
 ## Features implemented
 
@@ -178,6 +186,8 @@ manually inspected in a live window.
   and Esc clear-selection-return-to-Select, all exposed in the Edit menu.
 - Bring to front/forward, send backward/to back through Ctrl+[ / Ctrl+] with
   Shift variants, one undo entry per move and a selection that survives reorder.
+- Right-click canvas context menu with target-aware, shortcut-labelled commands
+  and no menu while editing text.
 - Persisted theme/tool; eframe-persisted window geometry and panel widths.
 - Tool palette with shortcuts, painted icons and accessible names.
 - Dark/light themes with central palette and contrast tests.
@@ -209,8 +219,8 @@ automation allowed). Items requiring a human reviewer:
 ## Known issues / limitations
 
 - Edit contains Undo/Redo, Cut/Copy/Paste, Select All, Duplicate, Delete and the
-  Order submenu; context menus, grouping, alignment and distribution arrive in
-  tasks 4.6–4.9. File has only Quit until document I/O (Stage 5).
+  Order submenu; grouping, alignment and distribution arrive in tasks 4.7–4.9.
+  File has only Quit until document I/O (Stage 5).
 - Z-order moves rewrite paint slots densely (0..n), so elements whose slot
   actually changed are replaced; this normalises any non-dense imported
   z-orders the first time a move touches them.
@@ -230,7 +240,7 @@ automation allowed). Items requiring a human reviewer:
 
 1. Read `AGENTS.md`, `project/ROADMAP.md`, this file, `project/DECISIONS.md`.
 2. `git status` must be clean; run `cargo test --workspace` for the baseline.
-3. Start with the first incomplete task, 4.6 — Context menus.
+3. Start with the first incomplete task, 4.7 — Grouping.
 4. Verify format, clippy, tests, build, and `timeout 8 ./target/debug/epsilon`.
 5. Update this file, `ROADMAP.md`, `CHANGELOG.md`, then commit and push.
 

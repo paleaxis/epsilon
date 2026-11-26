@@ -527,6 +527,83 @@ impl ClipboardFeedback {
     }
 }
 
+/// Actions offered by the canvas context menu. The list is filtered per target
+/// so the menu never shows a command that cannot run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ContextAction {
+    Cut,
+    Copy,
+    Paste,
+    SelectAll,
+    Duplicate,
+    Delete,
+    BringToFront,
+    BringForward,
+    SendBackward,
+    SendToBack,
+}
+
+impl ContextAction {
+    const ALL: [Self; 10] = [
+        Self::Cut,
+        Self::Copy,
+        Self::Paste,
+        Self::SelectAll,
+        Self::Duplicate,
+        Self::Delete,
+        Self::BringToFront,
+        Self::BringForward,
+        Self::SendBackward,
+        Self::SendToBack,
+    ];
+
+    fn action(self) -> Action {
+        match self {
+            Self::Cut => Action::Cut,
+            Self::Copy => Action::Copy,
+            Self::Paste => Action::Paste,
+            Self::SelectAll => Action::SelectAll,
+            Self::Duplicate => Action::Duplicate,
+            Self::Delete => Action::Delete,
+            Self::BringToFront => Action::ZOrder(ZOrderMove::Front),
+            Self::BringForward => Action::ZOrder(ZOrderMove::Forward),
+            Self::SendBackward => Action::ZOrder(ZOrderMove::Backward),
+            Self::SendToBack => Action::ZOrder(ZOrderMove::Back),
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Cut => "Cut",
+            Self::Copy => "Copy",
+            Self::Paste => "Paste",
+            Self::SelectAll => "Select All",
+            Self::Duplicate => "Duplicate",
+            Self::Delete => "Delete",
+            Self::BringToFront => "Bring to Front",
+            Self::BringForward => "Bring Forward",
+            Self::SendBackward => "Send Backward",
+            Self::SendToBack => "Send to Back",
+        }
+    }
+
+    fn is_z_order(self) -> bool {
+        matches!(
+            self,
+            Self::BringToFront | Self::BringForward | Self::SendBackward | Self::SendToBack
+        )
+    }
+}
+
+/// Shortcut text from the central registry, so menus and the help overlay
+/// cannot drift apart.
+fn shortcut_for(action: Action) -> Option<&'static str> {
+    KEYBINDINGS
+        .iter()
+        .find(|binding| binding.action == action)
+        .map(|binding| binding.shortcut)
+}
+
 /// Root application object and native shell.
 ///
 /// This is the Stage 1 shell: regions are laid out and themed, with the tool
@@ -1080,6 +1157,87 @@ impl EpsilonApp {
             Ok(_) | Err(_) => {
                 self.clipboard_feedback = Some(ClipboardFeedback::Unsupported);
                 false
+            }
+        }
+    }
+
+    /// Context-menu entries for the current target: selection commands when
+    /// something is selected, otherwise only canvas-level commands that work.
+    fn context_actions(&self) -> Vec<ContextAction> {
+        if self.editing_text.is_some() {
+            return Vec::new();
+        }
+        ContextAction::ALL
+            .into_iter()
+            .filter(|action| self.context_action_applies(*action))
+            .collect()
+    }
+
+    fn context_action_applies(&self, action: ContextAction) -> bool {
+        match action {
+            ContextAction::Paste => self.can_paste(),
+            // Select All only makes sense when the whole scene is not already
+            // selected, which is exactly the empty-selection canvas menu.
+            ContextAction::SelectAll => self.selected.is_empty() && self.can_select_all(),
+            ContextAction::Cut
+            | ContextAction::Copy
+            | ContextAction::Duplicate
+            | ContextAction::Delete
+            | ContextAction::BringToFront
+            | ContextAction::BringForward
+            | ContextAction::SendBackward
+            | ContextAction::SendToBack => self.can_copy(),
+        }
+    }
+
+    /// Right-clicking an unselected element selects it (replacing the
+    /// selection); right-clicking empty canvas clears the selection so the
+    /// canvas menu appears. Right-clicking an already selected element keeps a
+    /// multi-selection intact.
+    fn update_context_selection(&mut self, ctx: &egui::Context, canvas_rect: egui::Rect) {
+        if self.editing_text.is_some() || !ctx.input(|input| input.pointer.secondary_pressed()) {
+            return;
+        }
+        let Some(pointer) = ctx.pointer_hover_pos() else {
+            return;
+        };
+        if !canvas_rect.contains(pointer) {
+            return;
+        }
+        let world = self.screen_to_world(canvas_rect, pointer);
+        let tolerance = HIT_TOLERANCE_PIXELS / self.viewport.zoom;
+        let hit = self
+            .document
+            .paint_order()
+            .into_iter()
+            .rev()
+            .find(|element| element.hit_test(world, tolerance))
+            .map(|element| element.id);
+        match hit {
+            Some(id) => {
+                if !self.selected.contains(&id) {
+                    self.selected.clear();
+                    self.selected.insert(id);
+                }
+            }
+            None => self.selected.clear(),
+        }
+    }
+
+    fn context_menu(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        let mut z_order_started = false;
+        for action in self.context_actions() {
+            if action.is_z_order() && !z_order_started {
+                ui.separator();
+                z_order_started = true;
+            }
+            let mut button = egui::Button::new(action.label());
+            if let Some(shortcut) = shortcut_for(action.action()) {
+                button = button.shortcut_text(shortcut);
+            }
+            if ui.add(button).clicked() {
+                self.perform_action(ctx, action.action(), Point::ZERO);
+                ui.close();
             }
         }
     }
@@ -3156,6 +3314,7 @@ impl EpsilonApp {
                 if editing_text {
                     self.update_text_edit(ui.ctx(), rect);
                 } else {
+                    self.update_context_selection(ui.ctx(), rect);
                     self.update_pan(ui.ctx(), rect);
                     self.update_zoom(ui.ctx(), rect);
                     self.update_drawing(ui.ctx(), rect);
@@ -3251,6 +3410,15 @@ impl EpsilonApp {
                     );
                 }
             });
+
+        // The canvas is a container, not an interactive widget, so use the
+        // container variant. No menu exists while text is being edited.
+        if self.editing_text.is_none() && !self.context_actions().is_empty() {
+            let ctx = ui.ctx().clone();
+            response
+                .response
+                .container_context_menu(|ui| self.context_menu(ui, &ctx));
+        }
 
         response.response.rect
     }
@@ -4949,6 +5117,100 @@ mod tests {
                 "{action:?} has no shortcut"
             );
         }
+    }
+
+    #[test]
+    fn context_actions_match_the_target_and_always_have_shortcuts() {
+        let mut app = EpsilonApp::default();
+        assert!(
+            app.context_actions().is_empty(),
+            "empty canvas has no applicable actions"
+        );
+
+        app.commit_shape(
+            ElementKind::Rectangle,
+            Point::new(0.0, 0.0),
+            Point::new(30.0, 20.0),
+        );
+        assert_eq!(app.context_actions(), vec![ContextAction::SelectAll]);
+
+        let id = app.document.elements[0].id;
+        app.selected.insert(id);
+        let actions = app.context_actions();
+        for expected in [
+            ContextAction::Cut,
+            ContextAction::Copy,
+            ContextAction::Duplicate,
+            ContextAction::Delete,
+            ContextAction::BringToFront,
+            ContextAction::SendToBack,
+        ] {
+            assert!(actions.contains(&expected), "missing {expected:?}");
+        }
+        assert!(!actions.contains(&ContextAction::SelectAll));
+        assert!(
+            !actions.contains(&ContextAction::Paste),
+            "clipboard is empty"
+        );
+
+        let commands = run_clipboard_event(&mut app, egui::Event::Copy);
+        assert!(copied_text(&commands).is_some());
+        assert!(app.context_actions().contains(&ContextAction::Paste));
+
+        app.editing_text = Some(id);
+        assert!(
+            app.context_actions().is_empty(),
+            "no menu while editing text"
+        );
+
+        for action in ContextAction::ALL {
+            assert!(!action.label().is_empty());
+            assert!(
+                shortcut_for(action.action()).is_some(),
+                "{action:?} has no registered shortcut"
+            );
+        }
+    }
+
+    #[test]
+    fn right_click_selects_the_target_or_clears_the_selection() {
+        let canvas = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1000.0, 700.0));
+        let mut app = stacked_app();
+        let ids = paint_ids(&app);
+
+        let right_click_at = |app: &mut EpsilonApp, world: Point| {
+            let screen = app.viewport.world_to_screen(world);
+            let pos = canvas.min + egui::vec2(screen.x as f32, screen.y as f32);
+            let ctx = egui::Context::default();
+            let output = ctx.run_ui(
+                egui::RawInput {
+                    events: vec![
+                        egui::Event::PointerMoved(pos),
+                        egui::Event::PointerButton {
+                            pos,
+                            button: egui::PointerButton::Secondary,
+                            pressed: true,
+                            modifiers: egui::Modifiers::NONE,
+                        },
+                    ],
+                    ..Default::default()
+                },
+                |ui| app.update_context_selection(ui.ctx(), canvas),
+            );
+            output.drop_without_applying_deltas();
+        };
+
+        right_click_at(&mut app, Point::new(0.0, 10.0));
+        assert_eq!(app.selected, HashSet::from([ids[0]]));
+
+        // Right-clicking inside an existing multi-selection keeps it.
+        app.selected = HashSet::from([ids[0], ids[1]]);
+        right_click_at(&mut app, Point::new(0.0, 10.0));
+        assert_eq!(app.selected, HashSet::from([ids[0], ids[1]]));
+
+        // Empty canvas space clears the selection so the canvas menu applies.
+        right_click_at(&mut app, Point::new(600.0, 400.0));
+        assert!(app.selected.is_empty());
     }
 
     #[test]
