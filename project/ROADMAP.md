@@ -711,7 +711,8 @@ files` envelope with base element fields, type-specific text/linear fields,
 relative points, colors, styles, groups, opacity and preserved extras. File →
 Export Excalidraw writes atomically through the shared temp-file helper.
 Round-trip tests check required fields, IDs, groupIds, relative points and
-customData. Opening an export in the real Excalidraw app remains a manual check.
+customData. Opening an export in the real Excalidraw app remains a manual check;
+the exact procedure and pending checklist live in `PROJECT_STATE.md`.
 
 ### [x] 5.8 — Compatibility test suite
 
@@ -728,13 +729,21 @@ JSON and native future-schema rejection. The full workspace suite passes.
 
 ## Stage 6 — Export
 
-### [ ] 6.1 — Raster export backend decision and spike
+### [x] 6.1 — Raster export backend decision and spike
 
 Evaluate offscreen egui/glow capture vs CPU rasterizer (e.g. tiny-skia); record
 decision, dependency cost, text/rough-stroke fidelity.
 
 Acceptance: decision recorded in `DECISIONS.md`; smallest viable spike renders one
 rectangle + text to PNG.
+
+Completed 2026-11-26: compared offscreen egui/glow, CPU rasterization of egui
+meshes, and tiny-skia paths with fontdue glyphs. Chose tiny-skia + fontdue for
+deterministic GPU-free output and testability (D-052). The spike
+`crates/epsilon-app/tests/png_export_spike.rs` renders a styled rectangle and
+text from document geometry, writes a PNG, decodes it and checks dimensions and
+non-background pixels. Production scene bounds, text layout/shaping, rough
+strokes and UI wiring remain 6.2.
 
 ### [ ] 6.2 — PNG export pipeline
 

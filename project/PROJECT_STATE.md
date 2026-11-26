@@ -1,9 +1,9 @@
 # Project State
 
 Last updated: 2026-11-26
-Current stage: **Stage 5 — Documents and persistence** (complete)
-Last completed task: **5.8 — Compatibility test suite**
-Next task: **6.1 — Raster export backend decision and spike**
+Current stage: **Stage 6 — Export**
+Last completed task: **6.1 — Raster export backend decision and spike**
+Next task: **6.2 — PNG export pipeline**
 
 ## Status
 
@@ -48,7 +48,9 @@ from File → Export Excalidraw; unsupported element types are skipped with a
 status warning, and unknown element/envelope fields are preserved for re-export.
 A fixture-based compatibility suite covers supported scenes, unknown fields and
 types, future Excalidraw versions, malformed JSON and native future-version
-rejection.
+rejection. The raster export backend is decided: a CPU `tiny-skia` path
+rasterizer with `fontdue` glyph coverage, validated by a PNG spike rendering a
+rectangle and text. No PNG export UI or scene pipeline exists yet.
 
 Repository layout:
 
@@ -66,6 +68,7 @@ crates/epsilon-core/        UI-independent engine (no egui dependency)
   src/excalidraw.rs         Excalidraw import/export, extras preservation + 6 tests
   tests/excalidraw_compat.rs fixture compatibility suite + 5 tests
   tests/fixtures/           scene, future-version and malformed Excalidraw files
+  tests/png_export_spike.rs CPU rectangle + text PNG spike + 1 test
   src/history.rs            reversible commands, transactions, bounded undo/redo + 9 tests
   src/clipboard.rs          clipboard JSON payload, paste preparation, group-ID refresh + 7 tests
 crates/epsilon-app/         eframe desktop shell
@@ -149,28 +152,29 @@ Other shell behavior:
   `Context::egui_wants_keyboard_input()`; `cc.storage` is a field.
 - Remote: `origin git@github.com/paleaxis/epsilon.git`, branch `main`.
 
-## Verified commands and results (task 5.8)
+## Verified commands and results (task 6.1)
 
 | Command | Result |
 | --- | --- |
 | `cargo fmt --all -- --check` | exit 0 |
 | `cargo clippy --workspace --all-targets -- -D warnings` | exit 0 |
-| `cargo test --workspace` | **213 passed, 0 failed** (104 app, 104 core, 5 integration) |
+| `cargo test --workspace` | **214 passed, 0 failed** (104 app, 104 core, 5 compat, 1 PNG spike) |
 | `cargo build --workspace` | success, no warnings |
 | `timeout 8 ./target/debug/epsilon` | exit 124 (alive, no stderr) |
 
-Task 5.8 adds an integration suite under `crates/epsilon-core/tests` with
-fixtures for a supported scene, a future Excalidraw version and malformed JSON.
-It verifies element mapping, skipped type warnings, view state, preserved
-custom/unknown fields and files on export, re-import, future additive content,
-malformed rejection and native future schema rejection. The suite also retains
-all Stage 5 core/app tests and all Stage 4 and earlier coverage.
+Task 6.1 adds `crates/epsilon-app/tests/png_export_spike.rs`, which builds a
+document with a styled rectangle and text, rasterizes it with `tiny-skia`
+paths and `fontdue` glyph coverage using egui's embedded Ubuntu font, writes a
+real PNG, decodes it and checks dimensions, signature, file size and non-
+background pixels. Full scene bounds, multi-line text layout, rough strokes and
+production wiring remain task 6.2. The suite retains all Stage 5 and earlier
+coverage.
 
-Native launch was verified by process liveness. Import/export was exercised
-through core and app path methods; the native dialogs were not clicked, and an
-export was not opened in the real Excalidraw application (manual acceptance
-item remains). Images/`files`, frames, bindings and arrowhead variants are not
-fully mapped.
+Native launch was verified by process liveness. The spike artifact was written
+to a temporary PNG and validated by decoding it; it was not visually inspected.
+Native dialogs were not clicked, and an export was not opened in the real
+Excalidraw application (manual acceptance item remains). Images/`files`,
+frames, bindings and arrowhead variants are not fully mapped.
 
 ## Features implemented
 
@@ -246,6 +250,8 @@ fully mapped.
   entries using native dialogs.
 - Fixture-based Excalidraw/native compatibility suite covering supported
   scenes, unknown fields/types, future versions and malformed inputs.
+- Raster export backend decision: CPU `tiny-skia` paths plus `fontdue` glyphs,
+  with a tested rectangle + text PNG spike (no export UI yet).
 - Persisted theme/tool; eframe-persisted window geometry and panel widths.
 - Tool palette with shortcuts, painted icons and accessible names.
 - Dark/light themes with central palette and contrast tests.
@@ -274,14 +280,37 @@ automation allowed). Items requiring a human reviewer:
 - [ ] Tool rail, menus, toolbar and status bar spacing looks balanced.
 - [ ] Collapsed properties panel leaves a usable grab handle.
 
+## Manual acceptance checklist — Excalidraw export (task 5.7)
+
+Automated tests cover the export schema, required fields, relative line points,
+preserved custom data and re-import. The real-application check cannot run here
+(no browser/JS automation is permitted), so it remains an explicit manual gate:
+
+- [ ] Launch `./target/debug/epsilon` and draw a rectangle with a fill, an
+  ellipse, a line, an arrow, a freehand stroke and a text element.
+- [ ] Give at least one element a non-default stroke/fill color, width, opacity,
+  dashed/dotted stroke or hatch fill, and group two elements.
+- [ ] File → Export Excalidraw…, save `/tmp/epsilon-export-check.excalidraw`.
+- [ ] Open <https://excalidraw.com> (or Excalidraw desktop), choose Open, and
+  select that file.
+- [ ] Confirm all six element kinds appear at the same positions, with colors,
+  fills, stroke styles, opacity, text and group selection intact; no parse or
+  schema warning appears.
+- [ ] File → Import Excalidraw… in a fresh Epsilon window, select the same file,
+  and confirm the scene renders and the status bar reports no skipped supported
+  types.
+
+Status: **pending** — not performed in this environment.
+
 ## Known issues / limitations
 
 - Edit contains Undo/Redo, Cut/Copy/Paste, Select All, Duplicate, Delete, Group,
   Ungroup, Order and the Arrange alignment/distribution submenu. File has
   New/Open/Open Recent/Save/Save As, Excalidraw Import/Export and Quit with the
   unsaved-changes guard. Excalidraw images/frames/bindings are not mapped yet.
-- Stage 5 is complete; Stage 6 (PNG/SVG/clipboard export) is next. Manual
-  acceptance remains for opening an export in Excalidraw and clicking native
+- Stage 5 is complete; Stage 6 has only the backend decision/spike so far.
+  PNG/SVG/clipboard export and the export UI remain. Manual acceptance remains
+  for opening an Excalidraw export in the real app and clicking native
   dialogs/menus.
 - Arrange commands have no keyboard shortcuts; they are available only from the
   Edit menu, and the menu itself was not clicked in a live window.
@@ -305,8 +334,7 @@ automation allowed). Items requiring a human reviewer:
 
 1. Read `AGENTS.md`, `project/ROADMAP.md`, this file, `project/DECISIONS.md`.
 2. `git status` must be clean; run `cargo test --workspace` for the baseline.
-3. Start with the first incomplete task, 6.1 — Raster export backend decision
-   and spike.
+3. Start with the first incomplete task, 6.2 — PNG export pipeline.
 4. Verify format, clippy, tests, build, and `timeout 8 ./target/debug/epsilon`.
 5. Update this file, `ROADMAP.md`, `CHANGELOG.md`, then commit and push.
 

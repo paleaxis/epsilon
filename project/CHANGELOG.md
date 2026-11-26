@@ -4,6 +4,15 @@ Notable changes, newest first. Version sections are added at release time.
 
 ## [Unreleased]
 
+### Added — 2026-11-26 (task 6.1)
+
+- Raster export backend decision: CPU `tiny-skia` paths plus `fontdue` glyph
+  coverage, recorded in DECISIONS.md with dependency and fidelity trade-offs.
+- PNG spike test rendering a styled rectangle and text, then validating the
+  decoded image; no export UI or scene pipeline yet.
+- Explicit manual acceptance checklist for opening an Excalidraw export in the
+  real Excalidraw app (pending, documented in PROJECT_STATE.md).
+
 ### Added — 2026-11-26 (task 5.8)
 
 - Fixture-based Excalidraw compatibility suite covering supported scenes,

@@ -1061,3 +1061,46 @@ in the same suite.
 without touching test code, and `cargo test --workspace` runs the suite locally.
 The Excalidraw fixture does not replace the manual check of opening an export in
 the actual Excalidraw application.
+
+---
+
+## D-052 — PNG export uses CPU tiny-skia paths and fontdue glyph coverage, not an offscreen GL surface (2026-11-26)
+
+**Context.** Task 6.1 must choose a raster export backend. The canvas already
+renders through egui/glow, but exports must be deterministic, testable without a
+display, independent of UI panels, and usable for bounding-box cropping.
+
+**Options evaluated.**
+1. **Offscreen egui/glow framebuffer.** Reuses the exact canvas renderer, but
+   needs a hidden GL context/FBO, is driver- and platform-dependent, and is hard
+   to assert in headless tests. Rejected for PNG export.
+2. **CPU rasterization of egui tessellated meshes.** Would give near-exact text
+   and stroke parity without a GPU, but requires a custom textured-triangle
+   rasterizer, UV/font-atlas sampling and clipping; too much bespoke rendering
+   code for the export stage. Deferred unless parity issues appear.
+3. **CPU vector paths with `tiny-skia`, glyph coverage with `fontdue`.** Shapes
+   and rough polylines come from core geometry, rasterization is deterministic
+   and headless, PNG encoding is included, and text can be rendered from an
+   embedded font. Selected.
+
+**Decision.** Use `tiny-skia` 0.12 (BSD-3-Clause; pulls `tiny-skia-path` and
+`png`) for paths and PNG output, and `fontdue` 0.9.5 (MIT/Apache-2.0/Zlib) for
+glyph coverage. Both are currently **dev-dependencies** used by the spike; 6.2
+promotes them to runtime dependencies. The spike uses egui's embedded
+Ubuntu-Light font only as a test source, so production text must explicitly load
+or embed that font with its license. `crates/epsilon-app/tests/png_export_spike.rs`
+builds a document with a styled rectangle and text, writes a real PNG, decodes
+it, and checks dimensions, signature, file size and non-background pixels.
+
+**Text/rough-stroke fidelity.** The spike uses per-glyph advance widths, not
+egui's full shaping/kerning/line layout; production text layout must be shared
+with the canvas or reproduced before claiming visual parity. Rough strokes can
+reuse core `rough_polyline`/`smooth_polyline` and tiny-skia strokes, preserving
+geometry but not pixel-identical anti-aliasing. These remain 6.2 acceptance
+checks, not claimed now.
+
+**Consequences.** Export does not depend on a window, GPU driver or compositor,
+and runs in tests. The app gains two small dependencies (fontdue overlaps
+egui's existing text stack, which is accepted for a stable public glyph API).
+Text shaping/line breaking and pixel-parity with the canvas are explicit risks
+for 6.2/6.3.
