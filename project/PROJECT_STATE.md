@@ -2,8 +2,8 @@
 
 Last updated: 2026-11-26
 Current stage: **Stage 4 — Editing experience**
-Last completed task: **4.7 — Grouping**
-Next task: **4.8 — Alignment**
+Last completed task: **4.8 — Alignment**
+Next task: **4.9 — Distribution**
 
 ## Status
 
@@ -27,7 +27,9 @@ entry. Right-clicking the canvas targets the element under the pointer and
 opens a context menu containing only the commands valid for that target.
 Grouping wraps the selection in a new outermost group, ungrouping peels one
 nesting level, and clicks, marquees, shift-toggles and right-click targeting
-select whole groups. Each group operation is one undo entry.
+select whole groups. Each group operation is one undo entry. Alignment moves
+two or more selected elements onto a shared left/center/right or
+top/middle/bottom edge using rotated world bounds, as one undo transaction.
 
 Repository layout:
 
@@ -122,29 +124,29 @@ Other shell behavior:
   `Context::egui_wants_keyboard_input()`; `cc.storage` is a field.
 - Remote: `origin git@github.com/paleaxis/epsilon.git`, branch `main`.
 
-## Verified commands and results (task 4.7)
+## Verified commands and results (task 4.8)
 
 | Command | Result |
 | --- | --- |
 | `cargo fmt --all -- --check` | exit 0 |
 | `cargo clippy --workspace --all-targets -- -D warnings` | exit 0 |
-| `cargo test --workspace` | **165 passed, 0 failed** (85 app, 80 core) |
+| `cargo test --workspace` | **168 passed, 0 failed** (86 app, 82 core) |
 | `cargo build --workspace` | success, no warnings |
 | `timeout 8 ./target/debug/epsilon` | exit 124 (alive, no stderr) |
 
-Task 4.7 adds core tests for group expansion, nested group stacks, one-level
-ungrouping, document-order preservation, no-ops with fewer than two elements or
-unknown IDs, JSON round-trips with empty membership omitted, and fresh group
-IDs on clipboard paste. App tests cover Ctrl+G / Ctrl+Shift+G, exact undo/redo,
-selection preservation, grouped click/toggle/right-click targeting and
-context-menu group entries. The suite also retains task 4.6 context-menu
-tests, task 4.5 z-order tests, task 4.4 selection tests, task 4.3 clipboard
-tests, core history tests and all earlier shell, persistence, viewport, grid,
-document, styling, rough rendering and shape coverage.
+Task 4.8 adds core tests for every alignment edge, centre and middle using
+collective world bounds, a rotated element aligned by its axis-aligned extent,
+no-ops for fewer than two elements/unknown IDs/already-aligned selections, and
+app tests that alignment is one history transaction, preserves the selection,
+undoes exactly and records no entry for a no-op. The suite also retains task
+4.7 grouping tests, task 4.6 context-menu tests, task 4.5 z-order tests, task
+4.4 selection tests, task 4.3 clipboard tests, core history tests and all
+earlier shell, persistence, viewport, grid, document, styling, rough rendering
+and shape coverage.
 
-Native launch was verified by process liveness. Group shortcuts and selection
-expansion were exercised in headless egui tests; interactive group menu clicks
-were not manually inspected in a live window.
+Native launch was verified by process liveness. Alignment was exercised through
+core and app tests; interactive Edit → Arrange menu clicks were not manually
+inspected in a live window.
 
 ## Features implemented
 
@@ -194,6 +196,8 @@ were not manually inspected in a live window.
 - Group/ungroup through Ctrl+G / Ctrl+Shift+G, Edit and context menus, with
   nested outermost-first group IDs, whole-group selection, one undo entry per
   operation and fresh group IDs on paste/duplicate.
+- Align left/center/right and top/middle/bottom from Edit → Arrange for two or
+  more selected elements, using rotated world bounds and one undo entry.
 - Persisted theme/tool; eframe-persisted window geometry and panel widths.
 - Tool palette with shortcuts, painted icons and accessible names.
 - Dark/light themes with central palette and contrast tests.
@@ -225,8 +229,8 @@ automation allowed). Items requiring a human reviewer:
 ## Known issues / limitations
 
 - Edit contains Undo/Redo, Cut/Copy/Paste, Select All, Duplicate, Delete, Group,
-  Ungroup and the Order submenu; alignment and distribution arrive in tasks
-  4.8–4.9. File has only Quit until document I/O (Stage 5).
+  Ungroup, Order and the Arrange alignment submenu; distribution arrives in
+  task 4.9. File has only Quit until document I/O (Stage 5).
 - Z-order moves rewrite paint slots densely (0..n), so elements whose slot
   actually changed are replaced; this normalises any non-dense imported
   z-orders the first time a move touches them.
@@ -246,7 +250,7 @@ automation allowed). Items requiring a human reviewer:
 
 1. Read `AGENTS.md`, `project/ROADMAP.md`, this file, `project/DECISIONS.md`.
 2. `git status` must be clean; run `cargo test --workspace` for the baseline.
-3. Start with the first incomplete task, 4.8 — Alignment.
+3. Start with the first incomplete task, 4.9 — Distribution.
 4. Verify format, clippy, tests, build, and `timeout 8 ./target/debug/epsilon`.
 5. Update this file, `ROADMAP.md`, `CHANGELOG.md`, then commit and push.
 

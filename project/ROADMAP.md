@@ -561,12 +561,21 @@ one-level ungrouping, ordering, no-ops and paste; app tests cover shortcuts,
 undo/redo, selection preservation and grouped click/shift/right-click targeting.
 Interactive menu clicks were not manually inspected.
 
-### [ ] 4.8 — Alignment
+### [x] 4.8 — Alignment
 
 Align left/center/right/top/middle/bottom for 2+ elements.
 
 Acceptance: pure alignment functions unit-tested; bounds correct for rotated
 elements.
+
+Completed 2026-11-26: `Align` and `Document::align_changes` translate the
+selection onto the collective left/center/right or top/middle/bottom edge
+using rotated world bounds. The app exposes the six commands under Edit →
+Arrange, enabled for two or more selected elements; each effective alignment is
+one transaction, preserves the selection, and records no history for no-ops.
+Core tests cover every edge, a rotated rectangle, unknown IDs and fewer than two
+elements; app tests cover exact undo, selection preservation and no-op history.
+Interactive menu clicks were not manually inspected.
 
 ### [ ] 4.9 — Distribution
 

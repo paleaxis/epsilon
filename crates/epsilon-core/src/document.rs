@@ -509,6 +509,18 @@ pub enum ZOrderMove {
     Back,
 }
 
+/// A collective alignment edge for a multi-element selection. All elements
+/// are translated onto the same world-space edge or centre line.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Align {
+    Left,
+    CenterX,
+    Right,
+    Top,
+    CenterY,
+    Bottom,
+}
+
 /// A complete document: schema version, canvas settings and ordered elements.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Document {
@@ -704,6 +716,58 @@ impl Document {
                 let mut after = element.clone();
                 after.group_ids.remove(0);
                 (element.clone(), after)
+            })
+            .collect()
+    }
+
+    /// Before/after snapshots that align two or more elements on a shared
+    /// world-space edge. Rotated elements are aligned by their axis-aligned
+    /// world bounds, so the visible extent lands on the edge. Unknown IDs are
+    /// ignored, fewer than two elements and already-aligned selections produce
+    /// no changes.
+    pub fn align_changes(&self, ids: &[ElementId], align: Align) -> Vec<(Element, Element)> {
+        let elements: Vec<&Element> = ids.iter().filter_map(|id| self.element(*id)).collect();
+        if elements.len() < 2 {
+            return Vec::new();
+        }
+        let bounds: Vec<Rect> = elements
+            .iter()
+            .map(|element| element.world_bounds())
+            .collect();
+        let left = bounds
+            .iter()
+            .map(|bound| bound.min.x)
+            .fold(f64::INFINITY, f64::min);
+        let right = bounds
+            .iter()
+            .map(|bound| bound.max.x)
+            .fold(f64::NEG_INFINITY, f64::max);
+        let top = bounds
+            .iter()
+            .map(|bound| bound.min.y)
+            .fold(f64::INFINITY, f64::min);
+        let bottom = bounds
+            .iter()
+            .map(|bound| bound.max.y)
+            .fold(f64::NEG_INFINITY, f64::max);
+
+        elements
+            .into_iter()
+            .zip(bounds)
+            .filter_map(|(element, bounds)| {
+                let delta = match align {
+                    Align::Left => Point::new(left - bounds.min.x, 0.0),
+                    Align::CenterX => Point::new((left + right) / 2.0 - bounds.center().x, 0.0),
+                    Align::Right => Point::new(right - bounds.max.x, 0.0),
+                    Align::Top => Point::new(0.0, top - bounds.min.y),
+                    Align::CenterY => Point::new(0.0, (top + bottom) / 2.0 - bounds.center().y),
+                    Align::Bottom => Point::new(0.0, bottom - bounds.max.y),
+                };
+                if delta.x.abs() <= f64::EPSILON && delta.y.abs() <= f64::EPSILON {
+                    None
+                } else {
+                    Some((element.clone(), element.translated(delta)))
+                }
             })
             .collect()
     }
@@ -1277,6 +1341,82 @@ mod tests {
 
         assert_eq!(document.element(first).unwrap().z_order, 0);
         assert_eq!(document.element(second).unwrap().z_order, 1);
+    }
+
+    #[test]
+    fn align_changes_use_world_bounds_for_every_edge() {
+        let mut document = Document::new();
+        let first = document.add(Element::new(ElementKind::Rectangle, 10.0, 10.0, 20.0, 10.0));
+        let second = document.add(Element::new(ElementKind::Rectangle, 50.0, 40.0, 10.0, 30.0));
+        let third = document.add(Element::new(ElementKind::Ellipse, 100.0, 70.0, 30.0, 20.0));
+        let ids = [first, second, third];
+
+        for (align, edge) in [
+            (Align::Left, 10.0),
+            (Align::Right, 130.0),
+            (Align::Top, 10.0),
+            (Align::Bottom, 90.0),
+        ] {
+            let changes = document.align_changes(&ids, align);
+            assert!(!changes.is_empty(), "{align:?} must move something");
+            for (_, after) in &changes {
+                let bounds = after.world_bounds();
+                let actual = match align {
+                    Align::Left => bounds.min.x,
+                    Align::Right => bounds.max.x,
+                    Align::Top => bounds.min.y,
+                    Align::Bottom => bounds.max.y,
+                    Align::CenterX | Align::CenterY => unreachable!(),
+                };
+                assert!(
+                    (actual - edge).abs() < 1e-9,
+                    "{align:?}: {actual} != {edge}"
+                );
+            }
+        }
+
+        let changes = document.align_changes(&ids, Align::CenterX);
+        for (_, after) in changes {
+            assert!((after.world_bounds().center().x - 70.0).abs() < 1e-9);
+        }
+        let changes = document.align_changes(&ids, Align::CenterY);
+        for (_, after) in changes {
+            assert!((after.world_bounds().center().y - 50.0).abs() < 1e-9);
+        }
+    }
+
+    #[test]
+    fn align_changes_account_for_rotation_and_skip_no_ops() {
+        let mut document = Document::new();
+        let rotated = document.add(Element::new(ElementKind::Rectangle, 0.0, 0.0, 20.0, 10.0));
+        if let Some(element) = document.element(rotated).cloned() {
+            let mut element = element;
+            element.angle = std::f64::consts::FRAC_PI_2;
+            document.elements[0] = element;
+        }
+        let other = document.add(Element::new(ElementKind::Rectangle, 100.0, 0.0, 10.0, 10.0));
+
+        let rotated_min = document
+            .element(rotated)
+            .map(|element| element.world_bounds().min.x)
+            .expect("rotated element");
+        assert!((rotated_min - 5.0).abs() < 1e-9);
+
+        let changes = document.align_changes(&[rotated, other], Align::Left);
+        assert_eq!(
+            changes.len(),
+            1,
+            "the rotated element is already on the edge"
+        );
+        assert_eq!(changes[0].1.id, other);
+        assert!((changes[0].1.world_bounds().min.x - rotated_min).abs() < 1e-9);
+
+        assert!(document.align_changes(&[rotated], Align::Left).is_empty());
+        assert!(
+            document
+                .align_changes(&[ElementId::new(9999), other], Align::Left)
+                .is_empty()
+        );
     }
 
     #[test]

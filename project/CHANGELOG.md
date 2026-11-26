@@ -4,6 +4,13 @@ Notable changes, newest first. Version sections are added at release time.
 
 ## [Unreleased]
 
+### Added — 2026-11-26 (task 4.8)
+
+- Align left/center/right and top/middle/bottom for two or more selected
+  elements under Edit → Arrange, using rotated world bounds.
+- Each effective alignment is one undoable transaction that preserves the
+  selection; already-aligned selections do not add history.
+
 ### Added — 2026-11-26 (task 4.7)
 
 - Group and ungroup the selection with Ctrl+G / Ctrl+Shift+G, the Edit menu and

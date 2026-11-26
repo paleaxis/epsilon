@@ -844,3 +844,25 @@ ungrouped. Group IDs round-trip as Excalidraw-compatible strings, while empty
 membership stays out of JSON so ungrouped documents are unchanged. Selection is
 always group-complete, which also makes delete, copy, duplicate and transforms
 operate on whole groups without special cases.
+
+---
+
+## D-043 — Alignment uses collective rotated world bounds and Edit → Arrange (2026-11-26)
+
+**Context.** Task 4.8 needs six alignment commands whose results are correct for
+rotated elements, not just unrotated local rectangles, and whose behaviour can
+be tested without egui.
+
+**Decision.** `Align { Left, CenterX, Right, Top, CenterY, Bottom }` and
+`Document::align_changes(ids, align)` live in core. The function collects the
+axis-aligned `world_bounds()` of the selection, derives the collective edge or
+centre, and returns before/after snapshots translated onto it. It ignores
+unknown IDs, needs at least two elements and omits elements that are already on
+the target, so the app records no empty history entry. The app commits all
+snapshots in one `Transaction::replace`, preserves the selection, and exposes
+the commands under Edit → Arrange rather than assigning six new shortcuts.
+
+**Consequences.** Alignment matches what the user sees for rotated elements and
+keeps the core UI-independent. The Arrange submenu is enabled only for a
+multi-selection, and each alignment is one undo step. No new dependency or
+shortcut-table surface was introduced.

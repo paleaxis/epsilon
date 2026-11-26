@@ -4,8 +4,8 @@ use eframe::egui::{self, Align, Layout, RichText};
 
 use epsilon_core::clipboard::{ClipboardPayload, PASTE_OFFSET};
 use epsilon_core::document::{
-    Color as DocumentColor, Document, Element, ElementId, ElementKind, FillStyle, StrokeStyle,
-    TextAlign, ZOrderMove,
+    Align as ElementAlign, Color as DocumentColor, Document, Element, ElementId, ElementKind,
+    FillStyle, StrokeStyle, TextAlign, ZOrderMove,
 };
 use epsilon_core::geometry::{
     Point, Rect, ResizeHandle, arrowhead_points, constrain_angle, resize_rect, rotate_point,
@@ -732,6 +732,7 @@ enum Action {
     ClearSelection,
     Group,
     Ungroup,
+    Align(ElementAlign),
     ZOrder(ZOrderMove),
 }
 
@@ -1288,6 +1289,11 @@ impl EpsilonApp {
         self.editing_text.is_none() && self.selected.len() >= 2
     }
 
+    /// Alignment needs at least two selected elements to have a shared edge.
+    fn can_align(&self) -> bool {
+        self.editing_text.is_none() && self.selected.len() >= 2
+    }
+
     /// Ungrouping needs at least one selected element that belongs to a group.
     fn can_ungroup(&self) -> bool {
         self.editing_text.is_none()
@@ -1373,6 +1379,26 @@ impl EpsilonApp {
         let ids = self.document.expand_selection(&self.selected_ids());
         self.selected = ids.iter().copied().collect();
         let changes = self.document.ungroup_changes(&ids);
+        if changes.is_empty() {
+            return false;
+        }
+        let (before, after): (Vec<Element>, Vec<Element>) = changes.into_iter().unzip();
+        match Transaction::replace(before, after) {
+            Ok(transaction) => self.commit_transaction(transaction),
+            Err(error) => {
+                self.history_error = Some(format!("Edit failed: {error}"));
+                false
+            }
+        }
+    }
+
+    /// Aligns the whole selection on one world-space edge as a single history
+    /// transaction, preserving the selection.
+    fn align_selection(&mut self, align: ElementAlign) -> bool {
+        if !self.can_align() || self.history_blocked() {
+            return false;
+        }
+        let changes = self.document.align_changes(&self.selected_ids(), align);
         if changes.is_empty() {
             return false;
         }
@@ -1704,6 +1730,24 @@ impl EpsilonApp {
                                 }
                             }
                         });
+                        ui.menu_button("Arrange", |ui| {
+                            for (label, align) in [
+                                ("Align Left", ElementAlign::Left),
+                                ("Align Center", ElementAlign::CenterX),
+                                ("Align Right", ElementAlign::Right),
+                                ("Align Top", ElementAlign::Top),
+                                ("Align Middle", ElementAlign::CenterY),
+                                ("Align Bottom", ElementAlign::Bottom),
+                            ] {
+                                if ui
+                                    .add_enabled(self.can_align(), egui::Button::new(label))
+                                    .clicked()
+                                {
+                                    self.align_selection(align);
+                                    ui.close();
+                                }
+                            }
+                        });
                     });
                     ui.menu_button("View", |ui| {
                         self.theme_toggle(ui);
@@ -1916,6 +1960,9 @@ impl EpsilonApp {
             }
             Action::Ungroup => {
                 self.ungroup_selection();
+            }
+            Action::Align(align) => {
+                self.align_selection(align);
             }
             Action::ZOrder(movement) => {
                 self.move_selection_in_z_order(movement);
@@ -5064,6 +5111,33 @@ mod tests {
         let mut empty = EpsilonApp::default();
         run_shortcut(&mut empty, egui::Key::A, egui::Modifiers::COMMAND);
         assert!(empty.selected.is_empty());
+    }
+
+    #[test]
+    fn align_selection_commits_one_transaction_and_undoes() {
+        let mut app = selection_app();
+        let original = app.document.clone();
+        let history_before = app.history.undo_len();
+
+        // Both elements already share a top edge, so this is a no-op.
+        assert!(!app.align_selection(ElementAlign::Top));
+        assert_eq!(app.history.undo_len(), history_before);
+
+        assert!(app.align_selection(ElementAlign::Left));
+        assert_eq!(app.history.undo_len(), history_before + 1);
+        assert_eq!(app.selected.len(), 2, "alignment preserves the selection");
+        for element in &app.document.elements {
+            assert!((element.world_bounds().min.x - 10.0).abs() < 1e-9);
+            assert!((element.y - 20.0).abs() < 1e-9, "only x should move");
+        }
+
+        assert!(app.undo());
+        assert_eq!(app.document, original);
+        assert_eq!(app.selected.len(), 2);
+
+        app.selected = HashSet::from([app.document.elements[0].id]);
+        assert!(!app.align_selection(ElementAlign::Right));
+        assert_eq!(app.history.undo_len(), history_before);
     }
 
     #[test]
