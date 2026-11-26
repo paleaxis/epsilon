@@ -4,6 +4,13 @@ Notable changes, newest first. Version sections are added at release time.
 
 ## [Unreleased]
 
+### Added — 2026-11-26 (task 5.3)
+
+- New document (Ctrl+N), Save As (Ctrl+Shift+S) and a Save/Discard/Cancel guard
+  before New, Open and window close.
+- Guarded actions only continue after a successful save or explicit discard;
+  cancelling a Save As or failing to write keeps the prompt open.
+
 ### Added — 2026-11-26 (task 5.2)
 
 - Native Open/Save dialogs with Ctrl+O/Ctrl+S and File menu entries.

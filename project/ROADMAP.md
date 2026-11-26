@@ -642,12 +642,20 @@ untouched. Tests cover disk round-trips, malformed/missing files, failed writes,
 extension handling and shortcut registration; dialog clicks were not manually
 inspected.
 
-### [ ] 5.3 — New, Save As, close guard
+### [x] 5.3 — New, Save As, close guard
 
 New document, Save As, unsaved-changes prompt on close/new/open.
 
 Acceptance: cancel paths preserve data; window close respects dirty state; manual
 checks.
+
+Completed 2026-11-26: File → New and Save As, Ctrl+N and Ctrl+Shift+S, and a
+Save/Discard/Cancel modal before New, Open and compositor close requests. The
+close request is cancelled while the guard is unresolved; Save resolves it only
+after a successful write, so a cancelled Save As or failed write keeps the
+prompt and document intact. Discard paths reset path/history/selection safely.
+Tests cover New reset, Cancel/Discard on New, Save-then-continue and all file
+shortcuts. The live modal and compositor close flow were not manually tested.
 
 ### [ ] 5.4 — Autosave and crash recovery
 

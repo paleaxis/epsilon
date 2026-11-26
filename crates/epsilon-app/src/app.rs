@@ -532,16 +532,30 @@ impl ClipboardFeedback {
 /// Result of the most recent save or open, shown in the status bar.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum FileFeedback {
+    New(String),
     Saved(String),
     Opened(String),
     Error(String),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PendingAction {
+    New,
+    Open,
+    Quit,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum UnsavedChoice {
+    Save,
+    Discard,
+    Cancel,
+}
+
 impl FileFeedback {
     fn message(&self) -> &str {
         match self {
-            Self::Saved(name) => name,
-            Self::Opened(name) => name,
+            Self::New(message) | Self::Saved(message) | Self::Opened(message) => message,
             Self::Error(message) => message,
         }
     }
@@ -657,6 +671,11 @@ pub struct EpsilonApp {
     document: Document,
     /// Path of the file this document was last saved to or opened from.
     file_path: Option<PathBuf>,
+    /// A guard action waiting for the unsaved-changes prompt to resolve.
+    pending_action: Option<PendingAction>,
+    /// True once the user has chosen to close, so the close guard stops
+    /// cancelling the compositor's close request.
+    allow_close: bool,
     /// Document snapshot at the last save/open, used for dirty tracking.
     saved_document: Document,
     /// Result of the last save/open command.
@@ -719,6 +738,8 @@ impl Default for EpsilonApp {
             viewport: Viewport::default(),
             document: Document::default(),
             file_path: None,
+            pending_action: None,
+            allow_close: false,
             saved_document: Document::default(),
             file_feedback: None,
             last_window_title: String::new(),
@@ -762,8 +783,10 @@ enum Action {
     Cut,
     Copy,
     Paste,
+    New,
     Open,
     Save,
+    SaveAs,
     Delete,
     Duplicate,
     SelectAll,
@@ -900,6 +923,13 @@ const KEYBINDINGS: &[KeyBinding] = &[
         description: "Paste",
     },
     KeyBinding {
+        shortcut: "Ctrl+N",
+        key: egui::Key::N,
+        modifiers: egui::Modifiers::COMMAND,
+        action: Action::New,
+        description: "New document",
+    },
+    KeyBinding {
         shortcut: "Ctrl+O",
         key: egui::Key::O,
         modifiers: egui::Modifiers::COMMAND,
@@ -912,6 +942,17 @@ const KEYBINDINGS: &[KeyBinding] = &[
         modifiers: egui::Modifiers::COMMAND,
         action: Action::Save,
         description: "Save document",
+    },
+    KeyBinding {
+        shortcut: "Ctrl+Shift+S",
+        key: egui::Key::S,
+        modifiers: egui::Modifiers {
+            shift: true,
+            command: true,
+            ..egui::Modifiers::NONE
+        },
+        action: Action::SaveAs,
+        description: "Save document as",
     },
     KeyBinding {
         shortcut: "Delete",
@@ -1411,13 +1452,66 @@ impl EpsilonApp {
         }
     }
 
-    fn open_document(&mut self) {
+    /// Quit asks the guard first; once resolved, `finish_pending_action`
+    /// permits the compositor's close and sends the close command itself.
+    fn request_quit(&mut self, ctx: &egui::Context) {
+        if self.is_dirty() && !self.allow_close {
+            self.pending_action = Some(PendingAction::Quit);
+        } else {
+            request_quit(ctx);
+        }
+    }
+
+    fn request_new_document(&mut self) {
+        if self.history_blocked() {
+            self.file_feedback = Some(FileFeedback::Error(
+                "Finish the current edit before starting a new document".to_owned(),
+            ));
+            return;
+        }
+        if self.is_dirty() {
+            self.pending_action = Some(PendingAction::New);
+        } else {
+            self.new_document();
+        }
+    }
+
+    /// Replaces the scene with an empty document and clears session state.
+    fn new_document(&mut self) {
+        self.document = Document::new();
+        self.saved_document = self.document.clone();
+        self.viewport = Viewport::default();
+        self.history.clear();
+        self.history_error = None;
+        self.property_edit_before = None;
+        self.pointer_mode = PointerMode::Idle;
+        self.transform_original.clear();
+        self.selected.clear();
+        self.editing_text = None;
+        self.editing_text_is_new = false;
+        self.text_buffer.clear();
+        self.text_editor_needs_focus = false;
+        self.paste_count = 0;
+        self.file_path = None;
+        self.pending_action = None;
+        self.file_feedback = Some(FileFeedback::New("New document".to_owned()));
+    }
+
+    fn request_open_document(&mut self) {
         if self.history_blocked() {
             self.file_feedback = Some(FileFeedback::Error(
                 "Finish the current edit before opening a file".to_owned(),
             ));
             return;
         }
+        if self.is_dirty() {
+            self.pending_action = Some(PendingAction::Open);
+        } else {
+            self.open_document_dialog();
+        }
+    }
+
+    fn open_document_dialog(&mut self) {
         let Some(path) = rfd::FileDialog::new()
             .add_filter("Epsilon document", &[FILE_EXTENSION])
             .set_title("Open Epsilon document")
@@ -1428,27 +1522,25 @@ impl EpsilonApp {
         self.open_from_path(&path);
     }
 
-    fn save_document(&mut self) {
+    fn save_document(&mut self) -> bool {
         if self.history_blocked() {
             self.file_feedback = Some(FileFeedback::Error(
                 "Finish the current edit before saving".to_owned(),
             ));
-            return;
+            return false;
         }
         match self.file_path.clone() {
-            Some(path) => {
-                self.save_to_path(&path);
-            }
+            Some(path) => self.save_to_path(&path),
             None => self.save_document_as(),
         }
     }
 
-    fn save_document_as(&mut self) {
+    fn save_document_as(&mut self) -> bool {
         if self.history_blocked() {
             self.file_feedback = Some(FileFeedback::Error(
                 "Finish the current edit before saving".to_owned(),
             ));
-            return;
+            return false;
         }
         let default_name = if self.file_path.is_some() {
             self.document_display_name()
@@ -1463,9 +1555,65 @@ impl EpsilonApp {
             dialog = dialog.set_directory(parent);
         }
         let Some(path) = dialog.save_file() else {
+            return false;
+        };
+        self.save_to_path(&with_document_extension(path))
+    }
+
+    /// Applies the unsaved-changes choice. Saving that is cancelled (or fails)
+    /// keeps the prompt open and leaves the document untouched.
+    fn resolve_unsaved(&mut self, ctx: &egui::Context, choice: UnsavedChoice) {
+        match choice {
+            UnsavedChoice::Cancel => self.pending_action = None,
+            UnsavedChoice::Discard => self.finish_pending_action(ctx),
+            UnsavedChoice::Save => {
+                if self.save_document() {
+                    self.finish_pending_action(ctx);
+                }
+            }
+        }
+    }
+
+    fn finish_pending_action(&mut self, ctx: &egui::Context) {
+        let Some(action) = self.pending_action.take() else {
             return;
         };
-        self.save_to_path(&with_document_extension(path));
+        match action {
+            PendingAction::New => self.new_document(),
+            PendingAction::Open => self.open_document_dialog(),
+            PendingAction::Quit => {
+                self.allow_close = true;
+                request_quit(ctx);
+            }
+        }
+    }
+
+    fn unsaved_changes_window(&mut self, ctx: &egui::Context) {
+        if self.pending_action.is_none() {
+            return;
+        }
+        let mut choice = None;
+        egui::Window::new("Unsaved changes")
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+            .show(ctx, |ui| {
+                ui.label(format!("Save changes to {}?", self.document_display_name()));
+                ui.horizontal(|ui| {
+                    if ui.button("Save").clicked() {
+                        choice = Some(UnsavedChoice::Save);
+                    }
+                    if ui.button("Discard").clicked() {
+                        choice = Some(UnsavedChoice::Discard);
+                    }
+                    if ui.button("Cancel").clicked() {
+                        choice = Some(UnsavedChoice::Cancel);
+                    }
+                });
+            });
+        if let Some(choice) = choice {
+            self.resolve_unsaved(ctx, choice);
+        }
     }
 
     fn paste_from_menu(&mut self) -> bool {
@@ -1824,12 +1972,20 @@ impl EpsilonApp {
                     // grow when document and editing stages land.
                     ui.menu_button("File", |ui| {
                         if ui
+                            .add(egui::Button::new("New").shortcut_text("Ctrl+N"))
+                            .clicked()
+                        {
+                            self.request_new_document();
+                            ui.close();
+                        }
+                        if ui
                             .add(egui::Button::new("Open…").shortcut_text("Ctrl+O"))
                             .clicked()
                         {
-                            self.open_document();
+                            self.request_open_document();
                             ui.close();
                         }
+                        ui.separator();
                         if ui
                             .add(egui::Button::new("Save").shortcut_text("Ctrl+S"))
                             .clicked()
@@ -1837,9 +1993,16 @@ impl EpsilonApp {
                             self.save_document();
                             ui.close();
                         }
+                        if ui
+                            .add(egui::Button::new("Save As…").shortcut_text("Ctrl+Shift+S"))
+                            .clicked()
+                        {
+                            self.save_document_as();
+                            ui.close();
+                        }
                         ui.separator();
                         if ui.button("Quit").clicked() {
-                            request_quit(ui.ctx());
+                            self.request_quit(ui.ctx());
                         }
                     });
                     ui.menu_button("Edit", |ui| {
@@ -2192,11 +2355,17 @@ impl EpsilonApp {
             Action::Paste => {
                 self.paste_from_menu();
             }
+            Action::New => {
+                self.request_new_document();
+            }
             Action::Open => {
-                self.open_document();
+                self.request_open_document();
             }
             Action::Save => {
                 self.save_document();
+            }
+            Action::SaveAs => {
+                self.save_document_as();
             }
             Action::Delete => {
                 self.delete_selection();
@@ -3952,9 +4121,24 @@ fn pointer_anchor(ctx: &egui::Context, canvas_rect: egui::Rect) -> Point {
 
 impl eframe::App for EpsilonApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        let close_requested = ui.ctx().input(|input| input.viewport().close_requested());
+        if close_requested {
+            // Commit the live text buffer before deciding whether closing would
+            // lose data, so editing dirty state is accurate.
+            self.commit_text_edit(ui.ctx());
+            if self.is_dirty() && !self.allow_close {
+                ui.ctx()
+                    .send_viewport_cmd(egui::ViewportCommand::CancelClose);
+                if self.pending_action.is_none() {
+                    self.pending_action = Some(PendingAction::Quit);
+                }
+            }
+        }
+
         self.sync_window_title(ui.ctx());
         let canvas_rect = self.show_shell(ui);
         self.handle_shortcuts(ui.ctx(), canvas_rect);
+        self.unsaved_changes_window(ui.ctx());
         self.about_window(ui.ctx());
         self.help_window(ui.ctx());
     }
@@ -5329,11 +5513,88 @@ mod tests {
     }
 
     #[test]
+    fn new_document_resets_scene_and_dirty_state() {
+        let mut app = selection_app();
+        app.file_path = Some(PathBuf::from("scene.epsilon"));
+        app.saved_document = app.document.clone();
+
+        app.new_document();
+        assert!(app.document.elements.is_empty());
+        assert!(app.selected.is_empty());
+        assert!(app.file_path.is_none());
+        assert!(!app.is_dirty());
+        assert_eq!(app.history.undo_len(), 0);
+        assert!(matches!(
+            app.file_feedback,
+            Some(FileFeedback::New(ref message)) if message == "New document"
+        ));
+    }
+
+    #[test]
+    fn unsaved_guard_cancels_or_discards_new() {
+        let ctx = egui::Context::default();
+        let mut app = selection_app();
+        let original = app.document.clone();
+
+        app.request_new_document();
+        assert_eq!(app.pending_action, Some(PendingAction::New));
+        assert_eq!(app.document, original, "nothing changes before a choice");
+        app.resolve_unsaved(&ctx, UnsavedChoice::Cancel);
+        assert_eq!(app.pending_action, None);
+        assert_eq!(app.document, original);
+
+        app.request_new_document();
+        app.resolve_unsaved(&ctx, UnsavedChoice::Discard);
+        assert_eq!(app.pending_action, None);
+        assert!(app.document.elements.is_empty());
+        assert!(!app.is_dirty());
+    }
+
+    #[test]
+    fn unsaved_guard_save_writes_the_scene_before_continuing() {
+        let dir = file_test_dir("guard-save");
+        let path = dir.join("scene.epsilon");
+        let mut app = selection_app();
+        assert!(app.save_to_path(&path));
+        app.commit_shape(
+            ElementKind::Rectangle,
+            Point::new(200.0, 200.0),
+            Point::new(240.0, 240.0),
+        );
+        let expected_count = app.document.elements.len();
+
+        app.request_new_document();
+        assert_eq!(app.pending_action, Some(PendingAction::New));
+        app.resolve_unsaved(&egui::Context::default(), UnsavedChoice::Save);
+
+        assert!(app.document.elements.is_empty());
+        assert!(app.file_path.is_none());
+        assert!(!app.is_dirty());
+        let saved = EpsilonFile::load_from_path(&path).expect("guard save wrote the file");
+        assert_eq!(saved.document.elements.len(), expected_count);
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
     fn file_shortcuts_are_registered() {
-        for (key, action) in [(egui::Key::O, Action::Open), (egui::Key::S, Action::Save)] {
+        for (key, modifiers, action) in [
+            (egui::Key::N, egui::Modifiers::COMMAND, Action::New),
+            (egui::Key::O, egui::Modifiers::COMMAND, Action::Open),
+            (egui::Key::S, egui::Modifiers::COMMAND, Action::Save),
+            (
+                egui::Key::S,
+                egui::Modifiers {
+                    shift: true,
+                    command: true,
+                    ..egui::Modifiers::NONE
+                },
+                Action::SaveAs,
+            ),
+        ] {
             assert!(
                 KEYBINDINGS.iter().any(|binding| binding.key == key
-                    && binding.modifiers == egui::Modifiers::COMMAND
+                    && binding.modifiers == modifiers
                     && binding.action == action),
                 "missing file shortcut for {key:?}"
             );

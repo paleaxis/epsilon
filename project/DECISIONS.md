@@ -939,3 +939,26 @@ dirty. Dirty tracking costs one document clone and a comparison only when the
 title or status label is drawn. Dialog interactions cannot be exercised
 headlessly; path-level round-trips and failure paths are covered by tests. New,
 Save As and the close guard remain task 5.3.
+
+---
+
+## D-047 — Destructive document actions share a pending-action guard; close requests are cancelled first (2026-11-26)
+
+**Context.** New, Open and quitting can discard unsaved work, and a compositor
+close cannot be vetoed after the window is gone. Save As can also be cancelled,
+which must not lose the document.
+
+**Decision.** `PendingAction { New, Open, Quit }` records the action waiting on a
+single Save/Discard/Cancel modal. Dirty New/Open and File → Quit open the guard
+without touching the scene. A compositor close request first commits any live
+text edit, then sends `ViewportCommand::CancelClose` and opens the guard while
+the document is dirty and no close has been approved. `resolve_unsaved` only
+continues after `save_document()` succeeds; a failed save or a cancelled Save As
+leaves the prompt and document intact. Discard executes the pending action
+directly. Quit sets `allow_close` before sending `Close` so the guard does not
+cancel its own close request. The snapshot at the last successful save/open
+defines dirty state, so undoing back to that state needs no prompt.
+
+**Consequences.** All destructive paths share one tested decision point, and a
+failed save cannot silently discard work. The live modal and compositor close
+flow remain manual checks; headless tests exercise the resolution methods.

@@ -2,8 +2,8 @@
 
 Last updated: 2026-11-26
 Current stage: **Stage 5 — Documents and persistence**
-Last completed task: **5.2 — Save and open**
-Next task: **5.3 — New, Save As, close guard**
+Last completed task: **5.3 — New, Save As, close guard**
+Next task: **5.4 — Autosave and crash recovery**
 
 ## Status
 
@@ -36,7 +36,9 @@ format exists in core as a versioned JSON envelope with document, viewport app
 state and preserved extras maps. File → Open/Save (Ctrl+O/Ctrl+S) use native
 dialogs and atomic temp-file-plus-rename writes; the title and status bar show
 the file name and dirty state, and failed operations are reported without
-altering the current document.
+altering the current document. New (Ctrl+N), Save As (Ctrl+Shift+S), and a
+Save/Discard/Cancel guard before New, Open or window close protect unsaved
+work.
 
 Repository layout:
 
@@ -132,26 +134,26 @@ Other shell behavior:
   `Context::egui_wants_keyboard_input()`; `cc.storage` is a field.
 - Remote: `origin git@github.com/paleaxis/epsilon.git`, branch `main`.
 
-## Verified commands and results (task 5.2)
+## Verified commands and results (task 5.3)
 
 | Command | Result |
 | --- | --- |
 | `cargo fmt --all -- --check` | exit 0 |
 | `cargo clippy --workspace --all-targets -- -D warnings` | exit 0 |
-| `cargo test --workspace` | **182 passed, 0 failed** (92 app, 90 core) |
+| `cargo test --workspace` | **185 passed, 0 failed** (95 app, 90 core) |
 | `cargo build --workspace` | success, no warnings |
 | `timeout 8 ./target/debug/epsilon` | exit 124 (alive, no stderr) |
 
-Task 5.2 adds core tests for on-disk save/load/overwrite, malformed files,
-missing files, failed writes leaving existing content and no temp files behind.
-App tests cover save/open round-trip, dirty-to-clean transitions, title/status
-labels, malformed open leaving the document untouched, failed save remaining
-dirty, extension handling and Ctrl+O/Ctrl+S registration. The suite also
-retains task 5.1 format tests and all Stage 4 and earlier coverage.
+Task 5.3 adds app tests for New resetting scene/path/history and clean state,
+the unsaved guard cancelling and discarding New without touching the document,
+Save resolving the guard by writing the latest scene before continuing, and
+registration of Ctrl+N/Ctrl+O/Ctrl+S/Ctrl+Shift+S. The suite also retains task
+5.2 disk and error tests, task 5.1 format tests and all Stage 4 and earlier
+coverage.
 
-Native launch was verified by process liveness. Path-level save/open was tested
-to disk; the native dialogs themselves were not clicked in a live window, and
-read-only filesystem behaviour was represented by an invalid parent path.
+Native launch was verified by process liveness. Guard choices were exercised
+through app methods; the modal window, native dialogs and compositor close
+request flow were not manually inspected in a live session.
 
 ## Features implemented
 
@@ -208,9 +210,12 @@ read-only filesystem behaviour was represented by an invalid parent path.
 - Core `.epsilon` v1 JSON envelope with schema version, document, viewport app
   state, and unknown fields preserved at envelope, document and app-state
   levels; future versions and foreign formats get explicit errors.
-- File → Open/Save with native rfd dialogs, Ctrl+O/Ctrl+S, atomic same-directory
-  temp write plus rename, dirty snapshot tracking, title/status file indicators
-  and user-visible failures without data loss.
+- File → New/Open/Save/Save As with native rfd dialogs and Ctrl+N/O/S/Shift+S,
+  atomic same-directory temp write plus rename, dirty snapshot tracking,
+  title/status file indicators and user-visible failures without data loss.
+- Save/Discard/Cancel guard before New, Open and window close; saving resolves
+  the guard only after the write succeeds, and a cancelled Save As leaves the
+  prompt and document intact.
 - Persisted theme/tool; eframe-persisted window geometry and panel widths.
 - Tool palette with shortcuts, painted icons and accessible names.
 - Dark/light themes with central palette and contrast tests.
@@ -243,8 +248,8 @@ automation allowed). Items requiring a human reviewer:
 
 - Edit contains Undo/Redo, Cut/Copy/Paste, Select All, Duplicate, Delete, Group,
   Ungroup, Order and the Arrange alignment/distribution submenu. File has
-  Open/Save and Quit; New, Save As and the unsaved-changes close guard arrive in
-  task 5.3.
+  New/Open/Save/Save As and Quit with the unsaved-changes guard; autosave and
+  crash recovery arrive in task 5.4.
 - Arrange commands have no keyboard shortcuts; they are available only from the
   Edit menu, and the menu itself was not clicked in a live window.
 - Z-order moves rewrite paint slots densely (0..n), so elements whose slot
@@ -267,7 +272,7 @@ automation allowed). Items requiring a human reviewer:
 
 1. Read `AGENTS.md`, `project/ROADMAP.md`, this file, `project/DECISIONS.md`.
 2. `git status` must be clean; run `cargo test --workspace` for the baseline.
-3. Start with the first incomplete task, 5.3 — New, Save As, close guard.
+3. Start with the first incomplete task, 5.4 — Autosave and crash recovery.
 4. Verify format, clippy, tests, build, and `timeout 8 ./target/debug/epsilon`.
 5. Update this file, `ROADMAP.md`, `CHANGELOG.md`, then commit and push.
 
