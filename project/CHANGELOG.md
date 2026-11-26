@@ -4,6 +4,17 @@ Notable changes, newest first. Version sections are added at release time.
 
 ## [Unreleased]
 
+### Added — 2026-11-26 (task 4.7)
+
+- Group and ungroup the selection with Ctrl+G / Ctrl+Shift+G, the Edit menu and
+  the canvas context menu; each operation is one undoable transaction.
+- Elements store nested `groupIds` (outermost first); clicking, marquee-selecting
+  or right-clicking any member selects the whole outermost group, and shift-click
+  toggles it as a unit.
+- Ungroup peels one nesting level, leaves inner groups intact and never reorders
+  elements. Pasted and duplicated groups get fresh group IDs so copies never
+  merge with the source group.
+
 ### Added — 2026-11-26 (task 4.6)
 
 - Target-aware canvas context menu: right-click selects the element under the

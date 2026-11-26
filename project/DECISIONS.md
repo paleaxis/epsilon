@@ -814,3 +814,33 @@ slots densely normalises non-dense z values the first time a move touches an
 element, at the cost of sometimes replacing unselected neighbours that swap
 slots. Mid-drag and text-editing states block reorder through the existing
 `history_blocked()`/`can_copy()` gates.
+
+---
+
+## D-042 — Group membership is an outermost-first ID stack; selection expands to whole groups (2026-11-26)
+
+**Context.** Task 4.7 needs grouping and ungrouping, nested groups, and a
+selection model where clicking any member selects the whole group. Excalidraw
+stores `groupIds` as a string array on every element, so the core type must
+remain serializable to that shape for Stage 5 interop.
+
+**Decision.** `Element` gains a serde-defaulted `group_ids: Vec<GroupId>` where
+index 0 is the outermost group and the last entry is the innermost. `GroupId` is
+a transparent string newtype generated from a process counter (`g1`, `g2`, …).
+Grouping expands the selection to whole outermost groups and prepends one new
+group ID to every member; ungrouping removes index 0 from every member of each
+selected outermost group, exposing the next nesting level. `Document` owns
+`expand_selection`, `group_changes` and `ungroup_changes`, all pure and
+UI-independent; the app commits their snapshots as one `Transaction::replace`.
+Clicks, marquees, shift-toggles and right-click targeting call
+`expand_selection`, so a group is always selected as a unit. Clipboard paste
+maps every source group ID to a fresh ID while preserving the stack order, so
+copies keep their nesting without joining the original group. Ctrl+G and
+Ctrl+Shift+G, the Edit menu and the context menu expose the commands.
+
+**Consequences.** Group operations are undoable without cloning the document and
+never reorder elements. Nested groups remain intact until their outer level is
+ungrouped. Group IDs round-trip as Excalidraw-compatible strings, while empty
+membership stays out of JSON so ungrouped documents are unchanged. Selection is
+always group-complete, which also makes delete, copy, duplicate and transforms
+operate on whole groups without special cases.

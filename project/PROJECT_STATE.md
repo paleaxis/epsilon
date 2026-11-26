@@ -2,8 +2,8 @@
 
 Last updated: 2026-11-26
 Current stage: **Stage 4 — Editing experience**
-Last completed task: **4.6 — Context menus**
-Next task: **4.7 — Grouping**
+Last completed task: **4.7 — Grouping**
+Next task: **4.8 — Alignment**
 
 ## Status
 
@@ -25,6 +25,9 @@ front/send to back and one-step bring forward/send backward work from shortcuts
 and the Edit → Order submenu, preserving the selection and recording one undo
 entry. Right-clicking the canvas targets the element under the pointer and
 opens a context menu containing only the commands valid for that target.
+Grouping wraps the selection in a new outermost group, ungrouping peels one
+nesting level, and clicks, marquees, shift-toggles and right-click targeting
+select whole groups. Each group operation is one undo entry.
 
 Repository layout:
 
@@ -35,9 +38,9 @@ README.md                   build/run overview
 project/                    STATE, ROADMAP, DECISIONS, CHANGELOG
 crates/epsilon-core/        UI-independent engine (no egui dependency)
   src/geometry.rs           Point, Rect, shapes, rough strokes + 29 tests
-  src/document.rs           schema-versioned document, shapes, text, styles, paint order, z-order moves
+  src/document.rs           schema-versioned document, shapes, text, styles, paint order, z-order moves, groups
   src/history.rs            reversible commands, transactions, bounded undo/redo + 9 tests
-  src/clipboard.rs          clipboard JSON payload, paste preparation + 6 tests
+  src/clipboard.rs          clipboard JSON payload, paste preparation, group-ID refresh + 7 tests
 crates/epsilon-app/         eframe desktop shell
   src/main.rs               native entry point (persist_window enabled)
   src/layout.rs             shell size budgets + compile-time assertions
@@ -119,29 +122,29 @@ Other shell behavior:
   `Context::egui_wants_keyboard_input()`; `cc.storage` is a field.
 - Remote: `origin git@github.com/paleaxis/epsilon.git`, branch `main`.
 
-## Verified commands and results (task 4.6)
+## Verified commands and results (task 4.7)
 
 | Command | Result |
 | --- | --- |
 | `cargo fmt --all -- --check` | exit 0 |
 | `cargo clippy --workspace --all-targets -- -D warnings` | exit 0 |
-| `cargo test --workspace` | **158 passed, 0 failed** (82 app, 76 core) |
+| `cargo test --workspace` | **165 passed, 0 failed** (85 app, 80 core) |
 | `cargo build --workspace` | success, no warnings |
 | `timeout 8 ./target/debug/epsilon` | exit 124 (alive, no stderr) |
 
-Task 4.6 adds app tests for context-menu applicability (empty canvas has no
-entries; an unselected element offers Select All; a selection offers
-Cut/Copy/Duplicate/Delete and Order but not Select All until the clipboard is
-non-empty; no entries while text is edited), label/shortcut coverage for every
-context action, and right-click targeting (select unselected element, keep an
-existing multi-selection, clear on empty canvas). The suite also retains the
-task 4.5 z-order tests, task 4.4 selection tests, task 4.3 clipboard tests,
-core history tests and all earlier shell, persistence, viewport, grid,
+Task 4.7 adds core tests for group expansion, nested group stacks, one-level
+ungrouping, document-order preservation, no-ops with fewer than two elements or
+unknown IDs, JSON round-trips with empty membership omitted, and fresh group
+IDs on clipboard paste. App tests cover Ctrl+G / Ctrl+Shift+G, exact undo/redo,
+selection preservation, grouped click/toggle/right-click targeting and
+context-menu group entries. The suite also retains task 4.6 context-menu
+tests, task 4.5 z-order tests, task 4.4 selection tests, task 4.3 clipboard
+tests, core history tests and all earlier shell, persistence, viewport, grid,
 document, styling, rough rendering and shape coverage.
 
-Native launch was verified by process liveness. Context targets and the action
-list were exercised in headless egui tests; interactive right-click menu
-rendering and clicks were not manually inspected in a live window.
+Native launch was verified by process liveness. Group shortcuts and selection
+expansion were exercised in headless egui tests; interactive group menu clicks
+were not manually inspected in a live window.
 
 ## Features implemented
 
@@ -188,6 +191,9 @@ rendering and clicks were not manually inspected in a live window.
   Shift variants, one undo entry per move and a selection that survives reorder.
 - Right-click canvas context menu with target-aware, shortcut-labelled commands
   and no menu while editing text.
+- Group/ungroup through Ctrl+G / Ctrl+Shift+G, Edit and context menus, with
+  nested outermost-first group IDs, whole-group selection, one undo entry per
+  operation and fresh group IDs on paste/duplicate.
 - Persisted theme/tool; eframe-persisted window geometry and panel widths.
 - Tool palette with shortcuts, painted icons and accessible names.
 - Dark/light themes with central palette and contrast tests.
@@ -218,9 +224,9 @@ automation allowed). Items requiring a human reviewer:
 
 ## Known issues / limitations
 
-- Edit contains Undo/Redo, Cut/Copy/Paste, Select All, Duplicate, Delete and the
-  Order submenu; grouping, alignment and distribution arrive in tasks 4.7–4.9.
-  File has only Quit until document I/O (Stage 5).
+- Edit contains Undo/Redo, Cut/Copy/Paste, Select All, Duplicate, Delete, Group,
+  Ungroup and the Order submenu; alignment and distribution arrive in tasks
+  4.8–4.9. File has only Quit until document I/O (Stage 5).
 - Z-order moves rewrite paint slots densely (0..n), so elements whose slot
   actually changed are replaced; this normalises any non-dense imported
   z-orders the first time a move touches them.
@@ -240,7 +246,7 @@ automation allowed). Items requiring a human reviewer:
 
 1. Read `AGENTS.md`, `project/ROADMAP.md`, this file, `project/DECISIONS.md`.
 2. `git status` must be clean; run `cargo test --workspace` for the baseline.
-3. Start with the first incomplete task, 4.7 — Grouping.
+3. Start with the first incomplete task, 4.8 — Alignment.
 4. Verify format, clippy, tests, build, and `timeout 8 ./target/debug/epsilon`.
 5. Update this file, `ROADMAP.md`, `CHANGELOG.md`, then commit and push.
 

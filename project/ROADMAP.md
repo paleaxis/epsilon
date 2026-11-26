@@ -541,12 +541,25 @@ menu is attached while the canvas text editor is open. Tests cover
 applicability, labels/shortcut coverage and right-click targeting; interactive
 popup rendering was not manually inspected.
 
-### [ ] 4.7 — Grouping
+### [x] 4.7 — Grouping
 
 Group/ungroup with `groupIds`, grouped selection semantics, nested groups.
 
 Acceptance: group operations undoable; hit test selects whole group; ungroup
 preserves element order.
+
+Completed 2026-11-26: `Element` stores `group_ids` outermost-first and
+`Document` provides group expansion plus group/ungroup change snapshots.
+Grouping wraps the selection in a new outer group; ungrouping removes one
+nesting level from every selected outermost group without reordering elements.
+Clicks, marquees, shift-toggles and right-click targeting all expand to whole
+outermost groups, so a group cannot be partially selected. Ctrl+G /
+Ctrl+Shift+G, Edit menu entries and context-menu entries commit one undo
+transaction each. Clipboard paste regenerates group IDs while preserving
+nesting, so copies do not join the source group. Core tests cover nesting,
+one-level ungrouping, ordering, no-ops and paste; app tests cover shortcuts,
+undo/redo, selection preservation and grouped click/shift/right-click targeting.
+Interactive menu clicks were not manually inspected.
 
 ### [ ] 4.8 — Alignment
 

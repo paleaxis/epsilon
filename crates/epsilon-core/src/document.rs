@@ -4,6 +4,7 @@
 //! insertion order; paint order is derived from each element's `z_order`, with
 //! insertion order breaking ties so equal z-order values remain stable.
 
+use std::collections::HashSet;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use serde::{Deserialize, Serialize};
@@ -48,6 +49,41 @@ impl ElementId {
 }
 
 impl Default for ElementId {
+    fn default() -> Self {
+        Self::generate()
+    }
+}
+
+/// Stable identifier for a group.
+///
+/// Elements store their membership as a stack, outermost group first. Group
+/// IDs are strings because Excalidraw's `groupIds` are strings; the generated
+/// values only need to be unique within a process.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct GroupId(String);
+
+static NEXT_GROUP_ID: AtomicU64 = AtomicU64::new(1);
+
+impl GroupId {
+    pub fn new(value: impl Into<String>) -> Self {
+        Self(value.into())
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    /// Generates a fresh process-local group ID.
+    pub fn generate() -> Self {
+        Self(format!(
+            "g{}",
+            NEXT_GROUP_ID.fetch_add(1, Ordering::Relaxed)
+        ))
+    }
+}
+
+impl Default for GroupId {
     fn default() -> Self {
         Self::generate()
     }
@@ -193,6 +229,10 @@ pub struct Element {
     pub points: Vec<Point>,
     /// Paint order; larger values are drawn later.
     pub z_order: i32,
+    /// Group membership from outermost to innermost. Empty for ungrouped
+    /// elements; elements sharing the first ID form one selectable group.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub group_ids: Vec<GroupId>,
     /// Deterministic seed for procedural detail such as hand-drawn jitter.
     pub seed: u64,
     /// Element revision, incremented by edits.
@@ -228,6 +268,7 @@ impl Element {
             text_align: TextAlign::Left,
             points: Vec::new(),
             z_order: 0,
+            group_ids: Vec::new(),
             seed: id.get(),
             version: 1,
         }
@@ -286,6 +327,13 @@ impl Element {
     /// Unrotated bounds in the element's local frame.
     pub fn bounds(&self) -> Rect {
         Rect::from_xywh(self.x, self.y, self.width, self.height)
+    }
+
+    /// The outermost group this element belongs to. Clicking any member selects
+    /// every element sharing this ID; inner groups stay nested until the outer
+    /// group is ungrouped.
+    pub fn outer_group(&self) -> Option<&GroupId> {
+        self.group_ids.first()
     }
 
     /// Rotates a world point into this element's unrotated local frame.
@@ -580,6 +628,86 @@ impl Document {
         self.elements.iter().find(|element| element.id == id)
     }
 
+    /// Every element in the outermost group containing `id`, in document
+    /// order. An ungrouped element expands to itself; unknown IDs expand to
+    /// nothing.
+    pub fn group_members(&self, id: ElementId) -> Vec<ElementId> {
+        match self.element(id).and_then(Element::outer_group) {
+            Some(group) => self
+                .elements
+                .iter()
+                .filter(|element| element.group_ids.contains(group))
+                .map(|element| element.id)
+                .collect(),
+            None => self
+                .element(id)
+                .map(|element| element.id)
+                .into_iter()
+                .collect(),
+        }
+    }
+
+    /// Expands a selection to whole outermost groups, in document order and
+    /// without duplicates. This is the selection unit for clicks, marquees and
+    /// context menus, so a group can never be partially selected.
+    pub fn expand_selection(&self, ids: &[ElementId]) -> Vec<ElementId> {
+        let selected: HashSet<ElementId> = ids.iter().copied().collect();
+        let groups: HashSet<&GroupId> = self
+            .elements
+            .iter()
+            .filter(|element| selected.contains(&element.id))
+            .filter_map(Element::outer_group)
+            .collect();
+        self.elements
+            .iter()
+            .filter(|element| {
+                selected.contains(&element.id)
+                    || element
+                        .outer_group()
+                        .is_some_and(|group| groups.contains(group))
+            })
+            .map(|element| element.id)
+            .collect()
+    }
+
+    /// Before/after snapshots that put the selection into a new outermost
+    /// group. The selection is expanded to whole groups first, so grouping a
+    /// subset of an existing group cannot split it. Fewer than two involved
+    /// elements produce no changes.
+    pub fn group_changes(&self, ids: &[ElementId]) -> Vec<(Element, Element)> {
+        let ids = self.expand_selection(ids);
+        if ids.len() < 2 {
+            return Vec::new();
+        }
+        let group = GroupId::generate();
+        ids.iter()
+            .filter_map(|id| self.element(*id))
+            .map(|element| {
+                let mut after = element.clone();
+                after.group_ids.insert(0, group.clone());
+                (element.clone(), after)
+            })
+            .collect()
+    }
+
+    /// Before/after snapshots that remove one grouping level from the
+    /// selection. Each selected outermost group is ungrouped as a unit, so a
+    /// partially selected group cannot be left behind; inner group IDs remain
+    /// and expose the next nesting level. Returns empty when nothing is
+    /// grouped.
+    pub fn ungroup_changes(&self, ids: &[ElementId]) -> Vec<(Element, Element)> {
+        let ids = self.expand_selection(ids);
+        ids.iter()
+            .filter_map(|id| self.element(*id))
+            .filter(|element| !element.group_ids.is_empty())
+            .map(|element| {
+                let mut after = element.clone();
+                after.group_ids.remove(0);
+                (element.clone(), after)
+            })
+            .collect()
+    }
+
     pub fn remove(&mut self, id: ElementId) -> Option<Element> {
         let index = self.elements.iter().position(|element| element.id == id)?;
         Some(self.elements.remove(index))
@@ -781,6 +909,178 @@ mod tests {
         let all = [ElementId::new(1), ElementId::new(2), ElementId::new(3)];
         assert!(document.z_order_changes(&all, ZOrderMove::Front).is_empty());
         assert!(document.z_order_changes(&all, ZOrderMove::Back).is_empty());
+    }
+
+    #[test]
+    fn group_membership_round_trips_and_defaults_to_empty() {
+        let mut grouped = Element::with_id(
+            ElementId::new(1),
+            ElementKind::Rectangle,
+            0.0,
+            0.0,
+            10.0,
+            10.0,
+        );
+        grouped.group_ids = vec![GroupId::new("outer"), GroupId::new("inner")];
+        let json = serde_json::to_string(&grouped).expect("serialize grouped element");
+        let restored: Element = serde_json::from_str(&json).expect("deserialize grouped element");
+        assert_eq!(restored.group_ids, grouped.group_ids);
+
+        let ungrouped = Element::with_id(
+            ElementId::new(2),
+            ElementKind::Ellipse,
+            0.0,
+            0.0,
+            10.0,
+            10.0,
+        );
+        let json = serde_json::to_string(&ungrouped).expect("serialize ungrouped element");
+        assert!(
+            !json.contains("group_ids"),
+            "empty membership stays out of the payload"
+        );
+        let restored: Element = serde_json::from_str(&json).expect("deserialize legacy element");
+        assert!(restored.group_ids.is_empty());
+    }
+
+    #[test]
+    fn grouping_shares_one_outer_id_and_ungrouping_peels_one_level() {
+        let mut document = Document::new();
+        for id in 1..=4 {
+            let mut element = Element::with_id(
+                ElementId::new(id),
+                ElementKind::Rectangle,
+                0.0,
+                0.0,
+                10.0,
+                10.0,
+            );
+            element.z_order = id as i32;
+            document.elements.push(element);
+        }
+        let order: Vec<ElementId> = document.elements.iter().map(|element| element.id).collect();
+
+        let changes = document.group_changes(&[ElementId::new(1), ElementId::new(2)]);
+        assert_eq!(changes.len(), 2);
+        apply_changes(&mut document, &changes);
+        let first_group = document
+            .element(ElementId::new(1))
+            .expect("first element")
+            .group_ids
+            .clone();
+        assert_eq!(first_group.len(), 1);
+        assert_eq!(
+            document
+                .element(ElementId::new(2))
+                .expect("second element")
+                .group_ids,
+            first_group
+        );
+        assert!(
+            document
+                .element(ElementId::new(3))
+                .expect("third element")
+                .group_ids
+                .is_empty()
+        );
+
+        let changes = document.group_changes(&[ElementId::new(3), ElementId::new(4)]);
+        apply_changes(&mut document, &changes);
+
+        // Grouping a selection that already contains whole groups nests a new
+        // outermost group without disturbing the inner IDs.
+        let changes = document.group_changes(&[
+            ElementId::new(1),
+            ElementId::new(2),
+            ElementId::new(3),
+            ElementId::new(4),
+        ]);
+        assert_eq!(changes.len(), 4);
+        apply_changes(&mut document, &changes);
+        let outer = document
+            .element(ElementId::new(1))
+            .expect("first element")
+            .group_ids
+            .clone();
+        assert_eq!(outer.len(), 2);
+        for id in 1..=4 {
+            assert_eq!(
+                document
+                    .element(ElementId::new(id))
+                    .expect("element")
+                    .group_ids[0],
+                outer[0],
+                "all four share the new outer group"
+            );
+        }
+        assert_eq!(
+            document
+                .expand_selection(&[ElementId::new(1)])
+                .into_iter()
+                .map(ElementId::get)
+                .collect::<Vec<_>>(),
+            vec![1, 2, 3, 4]
+        );
+
+        // Ungrouping removes exactly one level and never reorders elements.
+        let changes = document.ungroup_changes(&[ElementId::new(1)]);
+        assert_eq!(changes.len(), 4);
+        apply_changes(&mut document, &changes);
+        assert_eq!(
+            document
+                .elements
+                .iter()
+                .map(|element| element.id)
+                .collect::<Vec<_>>(),
+            order
+        );
+        assert_eq!(
+            document
+                .element(ElementId::new(1))
+                .expect("first element")
+                .group_ids,
+            first_group
+        );
+        assert_eq!(
+            document
+                .expand_selection(&[ElementId::new(1)])
+                .into_iter()
+                .map(ElementId::get)
+                .collect::<Vec<_>>(),
+            vec![1, 2]
+        );
+
+        let changes = document.ungroup_changes(&[ElementId::new(1)]);
+        apply_changes(&mut document, &changes);
+        assert!(
+            document
+                .element(ElementId::new(1))
+                .expect("first element")
+                .group_ids
+                .is_empty()
+        );
+        assert!(
+            document
+                .element(ElementId::new(3))
+                .expect("third element")
+                .group_ids
+                .len()
+                == 1
+        );
+    }
+
+    #[test]
+    fn group_changes_need_two_elements_and_ignore_unknown_ids() {
+        let document = three_stacked_elements();
+        assert!(document.group_changes(&[]).is_empty());
+        assert!(document.group_changes(&[ElementId::new(1)]).is_empty());
+        assert!(
+            document
+                .group_changes(&[ElementId::new(99), ElementId::new(100)])
+                .is_empty()
+        );
+        assert!(document.ungroup_changes(&[ElementId::new(1)]).is_empty());
+        assert!(document.expand_selection(&[ElementId::new(99)]).is_empty());
     }
 
     #[test]

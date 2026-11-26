@@ -537,6 +537,8 @@ enum ContextAction {
     SelectAll,
     Duplicate,
     Delete,
+    Group,
+    Ungroup,
     BringToFront,
     BringForward,
     SendBackward,
@@ -544,13 +546,15 @@ enum ContextAction {
 }
 
 impl ContextAction {
-    const ALL: [Self; 10] = [
+    const ALL: [Self; 12] = [
         Self::Cut,
         Self::Copy,
         Self::Paste,
         Self::SelectAll,
         Self::Duplicate,
         Self::Delete,
+        Self::Group,
+        Self::Ungroup,
         Self::BringToFront,
         Self::BringForward,
         Self::SendBackward,
@@ -565,6 +569,8 @@ impl ContextAction {
             Self::SelectAll => Action::SelectAll,
             Self::Duplicate => Action::Duplicate,
             Self::Delete => Action::Delete,
+            Self::Group => Action::Group,
+            Self::Ungroup => Action::Ungroup,
             Self::BringToFront => Action::ZOrder(ZOrderMove::Front),
             Self::BringForward => Action::ZOrder(ZOrderMove::Forward),
             Self::SendBackward => Action::ZOrder(ZOrderMove::Backward),
@@ -580,6 +586,8 @@ impl ContextAction {
             Self::SelectAll => "Select All",
             Self::Duplicate => "Duplicate",
             Self::Delete => "Delete",
+            Self::Group => "Group",
+            Self::Ungroup => "Ungroup",
             Self::BringToFront => "Bring to Front",
             Self::BringForward => "Bring Forward",
             Self::SendBackward => "Send Backward",
@@ -722,6 +730,8 @@ enum Action {
     Duplicate,
     SelectAll,
     ClearSelection,
+    Group,
+    Ungroup,
     ZOrder(ZOrderMove),
 }
 
@@ -885,6 +895,24 @@ const KEYBINDINGS: &[KeyBinding] = &[
         modifiers: egui::Modifiers::NONE,
         action: Action::ClearSelection,
         description: "Clear selection and return to Select",
+    },
+    KeyBinding {
+        shortcut: "Ctrl+G",
+        key: egui::Key::G,
+        modifiers: egui::Modifiers::COMMAND,
+        action: Action::Group,
+        description: "Group selection",
+    },
+    KeyBinding {
+        shortcut: "Ctrl+Shift+G",
+        key: egui::Key::G,
+        modifiers: egui::Modifiers {
+            shift: true,
+            command: true,
+            ..egui::Modifiers::NONE
+        },
+        action: Action::Ungroup,
+        description: "Ungroup selection",
     },
     KeyBinding {
         shortcut: "Ctrl+Shift+]",
@@ -1179,6 +1207,8 @@ impl EpsilonApp {
             // Select All only makes sense when the whole scene is not already
             // selected, which is exactly the empty-selection canvas menu.
             ContextAction::SelectAll => self.selected.is_empty() && self.can_select_all(),
+            ContextAction::Group => self.can_group(),
+            ContextAction::Ungroup => self.can_ungroup(),
             ContextAction::Cut
             | ContextAction::Copy
             | ContextAction::Duplicate
@@ -1216,8 +1246,7 @@ impl EpsilonApp {
         match hit {
             Some(id) => {
                 if !self.selected.contains(&id) {
-                    self.selected.clear();
-                    self.selected.insert(id);
+                    self.selected = self.document.expand_selection(&[id]).into_iter().collect();
                 }
             }
             None => self.selected.clear(),
@@ -1253,6 +1282,22 @@ impl EpsilonApp {
         self.editing_text.is_none() && !self.document.elements.is_empty()
     }
 
+    /// Grouping needs at least two selected elements; a selection that is
+    /// already one whole group can still be wrapped in an outer group.
+    fn can_group(&self) -> bool {
+        self.editing_text.is_none() && self.selected.len() >= 2
+    }
+
+    /// Ungrouping needs at least one selected element that belongs to a group.
+    fn can_ungroup(&self) -> bool {
+        self.editing_text.is_none()
+            && self.selected.iter().any(|id| {
+                self.document
+                    .element(*id)
+                    .is_some_and(|element| !element.group_ids.is_empty())
+            })
+    }
+
     fn select_all(&mut self) {
         if !self.can_select_all() || self.history_blocked() {
             return;
@@ -1284,6 +1329,61 @@ impl EpsilonApp {
         }
         self.selected = ids.into_iter().collect();
         true
+    }
+
+    /// Selected IDs in document order.
+    fn selected_ids(&self) -> Vec<ElementId> {
+        self.document
+            .elements
+            .iter()
+            .filter(|element| self.selected.contains(&element.id))
+            .map(|element| element.id)
+            .collect()
+    }
+
+    /// Wraps the selection in a new outermost group. The selection is expanded
+    /// to whole groups first, so nested groups cannot be split. One history
+    /// transaction records the change and the selection is preserved.
+    fn group_selection(&mut self) -> bool {
+        if !self.can_group() || self.history_blocked() {
+            return false;
+        }
+        let ids = self.document.expand_selection(&self.selected_ids());
+        self.selected = ids.iter().copied().collect();
+        let changes = self.document.group_changes(&ids);
+        if changes.is_empty() {
+            return false;
+        }
+        let (before, after): (Vec<Element>, Vec<Element>) = changes.into_iter().unzip();
+        match Transaction::replace(before, after) {
+            Ok(transaction) => self.commit_transaction(transaction),
+            Err(error) => {
+                self.history_error = Some(format!("Edit failed: {error}"));
+                false
+            }
+        }
+    }
+
+    /// Removes one grouping level from the selection. The selection is
+    /// expanded to whole groups first, so no group is left partially grouped.
+    fn ungroup_selection(&mut self) -> bool {
+        if !self.can_ungroup() || self.history_blocked() {
+            return false;
+        }
+        let ids = self.document.expand_selection(&self.selected_ids());
+        self.selected = ids.iter().copied().collect();
+        let changes = self.document.ungroup_changes(&ids);
+        if changes.is_empty() {
+            return false;
+        }
+        let (before, after): (Vec<Element>, Vec<Element>) = changes.into_iter().unzip();
+        match Transaction::replace(before, after) {
+            Ok(transaction) => self.commit_transaction(transaction),
+            Err(error) => {
+                self.history_error = Some(format!("Edit failed: {error}"));
+                false
+            }
+        }
     }
 
     /// Escape drops the selection and returns to the Select tool. It is a no-op
@@ -1564,6 +1664,27 @@ impl EpsilonApp {
                             ui.close();
                         }
                         ui.separator();
+                        if ui
+                            .add_enabled(
+                                self.can_group(),
+                                egui::Button::new("Group").shortcut_text("Ctrl+G"),
+                            )
+                            .clicked()
+                        {
+                            self.group_selection();
+                            ui.close();
+                        }
+                        if ui
+                            .add_enabled(
+                                self.can_ungroup(),
+                                egui::Button::new("Ungroup").shortcut_text("Ctrl+Shift+G"),
+                            )
+                            .clicked()
+                        {
+                            self.ungroup_selection();
+                            ui.close();
+                        }
+                        ui.separator();
                         ui.menu_button("Order", |ui| {
                             for (label, shortcut, movement) in [
                                 ("Bring to Front", "Ctrl+Shift+]", ZOrderMove::Front),
@@ -1789,6 +1910,12 @@ impl EpsilonApp {
             }
             Action::ClearSelection => {
                 self.clear_selection();
+            }
+            Action::Group => {
+                self.group_selection();
+            }
+            Action::Ungroup => {
+                self.ungroup_selection();
             }
             Action::ZOrder(movement) => {
                 self.move_selection_in_z_order(movement);
@@ -2569,6 +2696,7 @@ impl EpsilonApp {
                     .filter(|element| element.intersects_rect(marquee))
                     .map(|element| element.id)
                     .collect();
+                let hits = self.document.expand_selection(&hits);
                 if !additive {
                     self.selected.clear();
                 }
@@ -2625,8 +2753,7 @@ impl EpsilonApp {
                 self.pointer_mode = PointerMode::Idle;
             } else {
                 if !self.selected.contains(&id) {
-                    self.selected.clear();
-                    self.selected.insert(id);
+                    self.selected = self.document.expand_selection(&[id]).into_iter().collect();
                 }
                 self.transform_original = self.selected_snapshots();
                 self.pointer_mode = PointerMode::Moving {
@@ -2647,13 +2774,18 @@ impl EpsilonApp {
     }
 
     fn toggle_selected(&mut self, id: ElementId, additive: bool) {
+        let members = self.document.expand_selection(&[id]);
         if additive {
-            if !self.selected.remove(&id) {
-                self.selected.insert(id);
+            let all_selected = members.iter().all(|member| self.selected.contains(member));
+            if all_selected {
+                for member in members {
+                    self.selected.remove(&member);
+                }
+            } else {
+                self.selected.extend(members);
             }
         } else {
-            self.selected.clear();
-            self.selected.insert(id);
+            self.selected = members.into_iter().collect();
         }
     }
 
@@ -4935,6 +5067,132 @@ mod tests {
     }
 
     #[test]
+    fn group_shortcut_wraps_the_selection_and_undoes() {
+        let mut app = selection_app();
+        let original = app.document.clone();
+
+        run_shortcut(&mut app, egui::Key::G, egui::Modifiers::COMMAND);
+
+        assert_eq!(app.history.undo_len(), 3, "grouping is one undo entry");
+        assert_eq!(app.selected.len(), 2, "selection is preserved");
+        let first = &app.document.elements[0];
+        let second = &app.document.elements[1];
+        assert_eq!(first.group_ids.len(), 1);
+        assert_eq!(first.group_ids, second.group_ids);
+        assert_eq!(
+            app.document.expand_selection(&[first.id]),
+            vec![first.id, second.id],
+            "one member expands to the whole group"
+        );
+
+        assert!(app.undo());
+        assert_eq!(app.document, original);
+        assert!(app.redo());
+        assert_eq!(app.document.elements[0].group_ids.len(), 1);
+    }
+
+    #[test]
+    fn ungroup_shortcut_peels_one_level_and_preserves_element_order() {
+        let mut app = selection_app();
+        let ids: Vec<ElementId> = app.document.elements.iter().map(|e| e.id).collect();
+        app.selected = ids.iter().copied().collect();
+        assert!(app.group_selection());
+        let grouped = app.document.clone();
+
+        run_shortcut(&mut app, egui::Key::G, shift_command());
+
+        assert!(
+            app.document
+                .elements
+                .iter()
+                .all(|element| element.group_ids.is_empty())
+        );
+        assert_eq!(
+            app.document
+                .elements
+                .iter()
+                .map(|element| element.id)
+                .collect::<Vec<_>>(),
+            ids,
+            "ungrouping must not reorder elements"
+        );
+        assert_eq!(app.selected, ids.into_iter().collect());
+
+        assert!(app.undo());
+        assert_eq!(app.document, grouped);
+    }
+
+    #[test]
+    fn grouped_click_and_shift_click_select_the_whole_group() {
+        let ctx = egui::Context::default();
+        theme::apply(&ctx, Theme::Dark);
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1000.0, 700.0));
+        let mut app = EpsilonApp::default();
+        let mut first_element = Element::new(ElementKind::Rectangle, 0.0, 0.0, 100.0, 100.0);
+        first_element.style.fill = DocumentColor::WHITE;
+        let mut second_element = Element::new(ElementKind::Rectangle, 200.0, 0.0, 100.0, 100.0);
+        second_element.style.fill = DocumentColor::WHITE;
+        let first = app.document.add(first_element);
+        let second = app.document.add(second_element);
+        app.selected = HashSet::from([first, second]);
+        assert!(app.group_selection());
+        app.selected.clear();
+
+        run_app_frame(&mut app, &ctx, screen, Vec::new());
+        let point = app.canvas_rect.min + egui::vec2(50.0, 50.0);
+        run_app_frame(
+            &mut app,
+            &ctx,
+            screen,
+            vec![
+                egui::Event::PointerMoved(point),
+                egui::Event::PointerButton {
+                    pos: point,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ],
+        );
+        assert_eq!(app.selected, HashSet::from([first, second]));
+        run_app_frame(
+            &mut app,
+            &ctx,
+            screen,
+            vec![egui::Event::PointerButton {
+                pos: point,
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: egui::Modifiers::NONE,
+            }],
+        );
+
+        // Shift-clicking any member removes the whole group.
+        app.toggle_selected(first, true);
+        assert!(app.selected.is_empty());
+        app.toggle_selected(first, true);
+        assert_eq!(app.selected, HashSet::from([first, second]));
+
+        // Right-clicking a member targets the whole group as well.
+        app.selected.clear();
+        run_app_frame(
+            &mut app,
+            &ctx,
+            screen,
+            vec![
+                egui::Event::PointerMoved(point),
+                egui::Event::PointerButton {
+                    pos: point,
+                    button: egui::PointerButton::Secondary,
+                    pressed: true,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ],
+        );
+        assert_eq!(app.selected, HashSet::from([first, second]));
+    }
+
+    #[test]
     fn duplicate_offsets_by_one_grid_step_and_selects_the_copies() {
         let mut app = selection_app();
         app.selected = app.document.elements[..1].iter().map(|e| e.id).collect();
@@ -5109,6 +5367,8 @@ mod tests {
                 egui::Modifiers::NONE,
                 Action::ClearSelection,
             ),
+            (egui::Key::G, egui::Modifiers::COMMAND, Action::Group),
+            (egui::Key::G, shift_command(), Action::Ungroup),
         ] {
             assert!(
                 KEYBINDINGS.iter().any(|binding| binding.key == key

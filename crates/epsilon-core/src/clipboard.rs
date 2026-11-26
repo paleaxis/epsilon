@@ -5,11 +5,11 @@
 //! elements always receive fresh IDs and paint-order slots, and keep the
 //! relative order they had on the clipboard.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 
-use crate::document::{Document, Element, ElementId};
+use crate::document::{Document, Element, ElementId, GroupId};
 use crate::geometry::Point;
 
 /// World-space offset applied to each successive paste.
@@ -65,8 +65,9 @@ impl ClipboardPayload {
     /// Copies are translated by `offset`, sorted into paint order, given fresh
     /// IDs that cannot collide with the current document or reuse an ID from
     /// the payload, and assigned new `z_order` values above every existing
-    /// element. The input order is preserved for elements sharing a
-    /// `z_order`.
+    /// element. Group membership keeps its nesting structure but receives
+    /// fresh group IDs, so a pasted group never merges with the original. The
+    /// input order is preserved for elements sharing a `z_order`.
     pub fn paste_elements(&self, document: &Document, offset: Point) -> Vec<Element> {
         if !self.is_supported() {
             return Vec::new();
@@ -87,6 +88,16 @@ impl ClipboardPayload {
             .map(|element| element.id)
             .chain(self.elements.iter().map(|element| element.id))
             .collect();
+        // One fresh group ID per source group keeps nested membership intact
+        // without joining the group the copy came from.
+        let mut groups: HashMap<GroupId, GroupId> = HashMap::new();
+        for element in &self.elements {
+            for group in &element.group_ids {
+                groups
+                    .entry(group.clone())
+                    .or_insert_with(GroupId::generate);
+            }
+        }
         let first_z_order = document.next_z_order();
         ordered
             .into_iter()
@@ -100,6 +111,11 @@ impl ClipboardPayload {
                 used.insert(id);
                 pasted.id = id;
                 pasted.z_order = first_z_order.saturating_add(index as i32);
+                pasted.group_ids = element
+                    .group_ids
+                    .iter()
+                    .filter_map(|group| groups.get(group).cloned())
+                    .collect();
                 pasted.version = 1;
                 pasted
             })
@@ -202,6 +218,34 @@ mod tests {
         );
         assert_eq!(pasted[0].x, 6.0);
         assert_eq!(pasted[0].y, 8.0);
+    }
+
+    #[test]
+    fn paste_preserves_group_nesting_with_fresh_ids() {
+        let outer = GroupId::new("outer");
+        let inner = GroupId::new("inner");
+        let mut first = rectangle(2, 10.0, 20.0, 0);
+        first.group_ids = vec![outer.clone(), inner.clone()];
+        let mut second = rectangle(3, 20.0, 20.0, 1);
+        second.group_ids = vec![outer.clone(), inner.clone()];
+
+        let mut document = Document::new();
+        let mut original = rectangle(1, 0.0, 0.0, 0);
+        original.group_ids = vec![outer.clone()];
+        document.elements.push(original);
+
+        let payload = ClipboardPayload::new(vec![first, second]);
+        let pasted = payload.paste_elements(&document, Point::ZERO);
+
+        assert_eq!(pasted.len(), 2);
+        assert_eq!(pasted[0].group_ids.len(), 2);
+        assert_eq!(pasted[1].group_ids, pasted[0].group_ids);
+        assert_ne!(pasted[0].group_ids[0], outer);
+        assert_ne!(pasted[0].group_ids[1], inner);
+
+        // Each paste is a separate group, not a merge with the previous copy.
+        let again = payload.paste_elements(&document, Point::ZERO);
+        assert_ne!(again[0].group_ids[0], pasted[0].group_ids[0]);
     }
 
     #[test]
