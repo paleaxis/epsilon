@@ -4,6 +4,16 @@ Notable changes, newest first. Version sections are added at release time.
 
 ## [Unreleased]
 
+### Changed — 2026-11-27 (task 7.3)
+
+- Canvas painting culls elements outside the viewport using rotated bounds with
+  conservative margins for rough strokes, arrowheads and text; a 5,000-element
+  frame dropped from ~3.5 ms to ~0.8 ms in release measurements.
+- The startup icon rasterizer fills uniform background/board pixels without
+  supersampling and prunes stroke segments by bounding box, cutting icon
+  generation from ~128 ms to ~15 ms and startup to ~77 ms.
+- Added an ignored release-mode profiling harness for frame-time measurements.
+
 ### Added — 2026-11-27 (task 7.2)
 
 - Embedded window icon rasterized at startup from code (rounded whiteboard plus

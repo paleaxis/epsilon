@@ -1291,3 +1291,35 @@ association requirement. The SVG and the procedural icon share a design but are
 maintained separately. Automated checks validate the desktop entry and MIME
 cache in a temporary prefix and launch the installed command with a scene; icon
 appearance, application-menu launch and file-manager clicks remain manual.
+
+---
+
+## D-059 — Conservative viewport culling and a release-mode profiling harness (2026-11-27)
+
+**Context.** Task 7.3 required profiling startup, idle CPU and pan/zoom frame
+time with 1k/5k-element scenes, and fixing only measured bottlenecks. The
+baseline release measurements showed a 5,000-element frame at ~3.5 ms, with
+more than 90% of those elements off screen in the synthetic 2,250×3,500 scene,
+and window startup at ~250 ms, of which ~128 ms was the code-generated icon.
+The frame budget was already met, but both costs were avoidable.
+
+**Decision.** `paint_document` culls an element when its rotated world bounds,
+projected to screen space and expanded by a conservative margin, do not
+intersect the canvas. The margin is `max(stroke_width/2, rough jitter) + 2`,
+raised to the arrowhead half-width for arrows and to twice the font size for
+text, because those can paint outside their stored bounds. Culling is done on
+rotated bounds so a long shape turned sideways is not lost. The icon keeps its
+4×4 supersampling on edges but fills pixels whose four corners are inside the
+convex background/board shapes directly, gates mark tests with a bounding box,
+compares squared distances and prunes stroke segments by per-segment boxes.
+Frame measurements live in an ignored test (`profile_frame_costs`) run in
+release mode, so the normal suite stays fast.
+
+**Consequences.** Measured frames fell to ~0.8 ms idle / ~1.2 ms pan-zoom at
+5,000 elements and startup to 75–102 ms; the icon preview and tests were
+unchanged. The culling margin trades a tiny amount of paint work near the edge
+for safety with rough strokes and text re-wrapping, and no spatial index was
+introduced because a linear pass over 5,000 elements (and `paint_order` at
+11 µs) is far below the frame budget. Performance is machine- and
+scene-dependent; the harness is manual, so regressions are not gated in CI
+(there is no CI yet).

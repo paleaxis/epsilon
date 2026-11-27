@@ -1,9 +1,9 @@
 # Project State
 
 Last updated: 2026-11-27
-Current stage: **Stage 7 — Desktop readiness** (7.1 and 7.2 complete)
-Last completed task: **7.2 — Icon, desktop entry, file associations**
-Next task: **7.3 — Performance profiling**
+Current stage: **Stage 7 — Desktop readiness** (7.1, 7.2 and 7.3 complete)
+Last completed task: **7.3 — Performance profiling**
+Next task: **7.4 — Release build and packaging docs**
 
 ## Status
 
@@ -67,7 +67,10 @@ complete. Stage 7 now has desktop integration: the window icon is rasterized in
 code, `packaging/` provides a desktop entry, MIME types for `.epsilon` and
 `.excalidraw`, a scalable launcher icon and a user install script, and a file
 path passed on the command line opens the document or imports the scene at
-startup.
+startup. Task 7.3 profiled startup, idle CPU and pan/zoom frames with 1k/5k
+scenes in release mode: startup fell from ~250 ms to ~77 ms after the icon
+rasterizer stopped supersampling uniform areas and pruned stroke segments, and
+off-screen culling cut a 5,000-element frame from ~3.5 ms to ~0.8 ms.
 
 Repository layout:
 
@@ -90,7 +93,7 @@ crates/epsilon-core/        UI-independent engine (no egui dependency)
   src/clipboard.rs          clipboard JSON payload, paste preparation, group-ID refresh + 7 tests
 crates/epsilon-app/         eframe desktop shell
   src/main.rs               native entry point (persist_window, icon, CLI file argument)
-  src/icon.rs               procedurally rasterized window icon + 4 tests
+  src/icon.rs               procedurally rasterized window icon (uniform-area fast paths) + 4 tests
   src/layout.rs             shell size budgets + compile-time assertions
   src/theme.rs              semantic palettes, Visuals setup, serializable Theme
   src/tools.rs              Tool enum, shortcuts, painted icons, tool buttons
@@ -231,9 +234,74 @@ failure that leaves a usable empty document. The install was exercised only in
 a temporary prefix, not in the user session. Previous verification: 7.1's 258
 tests and log/toast checks, 6.x export pipelines (see their checklists below).
 
+## Performance profiling (task 7.3)
+
+Measurements were taken on the development machine (4 available cores, Rust
+1.100, `--release`, thin LTO) with the ignored harness
+`cargo test -p epsilon-app --release -- --ignored --nocapture profile_frame_costs`.
+Each figure is the mean of 60 frames after three warm-up frames; "ui" is
+`Context::run_ui` (input, layout, painting) and "tess" is `Context::tessellate`
+for the same frame. Scenes are 50-column grids of filled rectangles with
+45×35 world-unit spacing: 1,000 elements span 2,250×700 and 5,000 span
+2,250×3,500, while the canvas is about 980×580, so the 5,000-element scene is
+more than 90% off screen unless culled. Pan/zoom frames move the viewport 4/2
+world units and change zoom by 2% per frame.
+
+| Measurement | Before | After |
+| --- | --- | --- |
+| 1,000 elements idle frame (ui + tess) | 1.30 ms | 0.91 ms |
+| 1,000 elements pan/zoom frame | 1.39 ms | 0.83 ms |
+| 5,000 elements idle frame | 3.49 ms | 0.79 ms |
+| 5,000 elements pan/zoom frame | 3.35 ms | 1.18 ms |
+| Window icon rasterization (one call) | 127.8 ms | 15.4 ms |
+| Startup until the window appears | 196–261 ms | 75–102 ms |
+| Idle CPU (5 s sample) | 0.00–0.60% | 0.2–3.2% (one outlier; median 0.6%) |
+| Resident memory (idle) | ~71 MB | ~71 MB |
+
+Startup was measured externally: the release binary is started, `niri msg
+windows` is polled for its PID, and the elapsed time is reported (about 10 ms
+polling granularity, so treat the absolute numbers as approximate). Idle CPU
+comes from `/proc/<pid>/stat` deltas over five seconds. The app only repaints
+on input, so idle CPU is effectively the compositor and event-loop cost; the
+3.2% sample ran while the machine was otherwise busy.
+
+Two measured bottlenecks were fixed:
+
+- **Off-screen painting.** `paint_document` now skips elements whose rotated
+  world bounds, projected to screen space and expanded by a conservative
+  margin, do not intersect the canvas. The margin covers rough-stroke jitter,
+  arrowhead width, stroke width and text that can re-wrap taller than its
+  stored height, so nothing visible is clipped. Unit tests cover an on-screen
+  rectangle, a far rectangle, a tall rectangle visible only after rotation, an
+  arrow whose head alone overlaps the canvas, and text near/past the margin.
+- **Icon rasterization.** The icon still uses 4×4 supersampling on edges, but
+  convex-corner checks fill uniform background/board pixels directly, mark
+  tests are gated by a bounding box, distances compare squares, and per-segment
+  boxes skip most of the 48-segment stroke walk. Output is visually unchanged
+  (preview inspected) and the design/tests are unchanged.
+
+`paint_order()` remains 11.3 µs per call at 5,000 elements, about 1% of the
+frame, so it was left alone. Per-element culling runs before the rough-stroke
+and tessellation work; egui's own tessellation of the surviving shapes is now
+the largest frame component at 5,000 elements (0.35–0.63 ms).
+
+### Verified commands and results (task 7.3)
+
+| Command | Result |
+| --- | --- |
+| `cargo fmt --all -- --check` | exit 0 |
+| `cargo clippy --workspace --all-targets -- -D warnings` | exit 0 |
+| `cargo test --workspace` | **270 passed, 0 failed** (152 app, 113 core, 5 compat); 1 ignored profiling harness |
+| `cargo build --workspace` | success, no warnings |
+| `timeout 8 ./target/debug/epsilon` | exit 124 (alive, no stderr) |
+| `cargo test -p epsilon-app --release -- --ignored --nocapture profile_frame_costs` | numbers in the table above |
+| `cargo build --release -p epsilon-app` + timed launches | window appeared after 75, 102 and 77 ms over three runs |
+
 ## Features implemented
 
 - Embedded window icon generated from code (no external image at runtime).
+- Off-screen element culling in the canvas paint path with conservative margins
+  for rough strokes, arrowheads and text.
 - Linux packaging: desktop launcher, scalable icon, shared-mime-info types for
   `.epsilon` and `.excalidraw`, and a user-level `install.sh`.
 - Startup file argument: `.excalidraw` imports, `.epsilon` opens natively, and
@@ -556,6 +624,12 @@ Status: **pending** — the install was validated in a temporary prefix only.
   MIME cache and launch with a file argument. The icon was not viewed, and no
   real file-manager double-click or application-menu launch was performed. A
   `*.excalidraw` association overrides any existing default on install.
+- Performance numbers come from one machine and synthetic rectangle grids; the
+  5,000-element scene assumes a large board with most elements off screen. The
+  ignored harness is not run by `cargo test --workspace`, so regressions are not
+  caught automatically. Startup is measured externally via compositor window
+  polling (~10 ms granularity) and includes process launch, GL/window setup and
+  the icon; idle CPU varies with system load.
 - No CI; local verification only. No visual/screenshot review performed.
 - Window/panel restore relies on eframe/egui and was not re-measured under niri.
 - Project license: GPL-3.0 (`LICENSE`); manifests declare `GPL-3.0-only`.
@@ -564,7 +638,7 @@ Status: **pending** — the install was validated in a temporary prefix only.
 
 1. Read `AGENTS.md`, `project/ROADMAP.md`, this file, `project/DECISIONS.md`.
 2. `git status` must be clean; run `cargo test --workspace` for the baseline.
-3. Start with the first incomplete task, 7.3 — Performance profiling.
+3. Start with the first incomplete task, 7.4 — Release build and packaging docs.
 4. Verify format, clippy, tests, build, and `timeout 8 ./target/debug/epsilon`.
 5. Update this file, `ROADMAP.md`, `CHANGELOG.md`, then commit and push.
 

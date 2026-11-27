@@ -179,6 +179,30 @@ fn element_screen_rect(
     )
 }
 
+/// Extra screen-space slack for the off-screen test. Rough strokes jitter past
+/// their geometry, arrowheads widen at the tip and text may re-wrap taller at a
+/// different zoom than the height stored at creation, so a sketch that is only
+/// just outside the canvas can still paint pixels inside it.
+fn cull_margin_pixels(element: &Element, zoom: f64) -> f32 {
+    let stroke_half = element.style.stroke_width * zoom * 0.5;
+    let mut margin = stroke_half.max(ROUGH_AMPLITUDE_PIXELS) + 2.0;
+    if element.kind == ElementKind::Arrow {
+        margin = margin.max(ARROW_HEAD_HALF_WIDTH_PIXELS);
+    }
+    if element.kind == ElementKind::Text {
+        margin = margin.max(element.font_size * zoom * 2.0);
+    }
+    margin as f32
+}
+
+/// Whether any part of `element` can paint inside the canvas. Uses rotated
+/// world bounds, so a long shape turned sideways is not culled by its unrotated
+/// bounds.
+fn element_is_visible(canvas_rect: egui::Rect, viewport: &Viewport, element: &Element) -> bool {
+    let bounds = world_rect_screen(canvas_rect, viewport, element.world_bounds());
+    canvas_rect.intersects(bounds.expand(cull_margin_pixels(element, viewport.zoom)))
+}
+
 /// Projects an arrowhead into screen space, keeping its size zoom-independent.
 fn arrowhead_screen_points(
     canvas_rect: egui::Rect,
@@ -4540,6 +4564,11 @@ impl EpsilonApp {
     /// Draws the document in paint order through the screen-space adapter.
     fn paint_document(&self, painter: &egui::Painter, canvas_rect: egui::Rect) {
         for element in self.document.paint_order() {
+            // Large scenes are mostly outside the viewport; skipping those
+            // elements avoids the rough-stroke and tessellation work entirely.
+            if !element_is_visible(canvas_rect, &self.viewport, element) {
+                continue;
+            }
             let rect = element_screen_rect(canvas_rect, &self.viewport, element);
             let opacity = element.style.opacity.clamp(0.0, 1.0);
             let fill = document_color_with_opacity(element.style.fill, opacity);
@@ -5516,6 +5545,123 @@ mod tests {
         );
     }
 
+    /// Profiling harness for task 7.3. It is ignored by default so the normal
+    /// suite stays fast; run it explicitly in release mode and read the
+    /// printed per-frame timings:
+    ///
+    /// ```text
+    /// cargo test -p epsilon-app --release -- --ignored --nocapture profile_frame_costs
+    /// ```
+    #[test]
+    #[ignore = "manual performance measurement; run in release mode with --ignored"]
+    fn profile_frame_costs() {
+        use std::time::{Duration, Instant};
+
+        fn frame_cost(
+            app: &mut EpsilonApp,
+            ctx: &egui::Context,
+            screen: egui::Rect,
+        ) -> (Duration, Duration) {
+            let started = Instant::now();
+            let output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(screen),
+                    ..Default::default()
+                },
+                |ui| {
+                    let _ = app.show_shell(ui);
+                },
+            );
+            let ui_time = started.elapsed();
+            let started = Instant::now();
+            let _meshes = ctx.tessellate(output.shapes, output.pixels_per_point);
+            (ui_time, started.elapsed())
+        }
+
+        fn summarise(label: &str, mut samples: Vec<Duration>) {
+            samples.sort_unstable();
+            let mean = samples.iter().map(Duration::as_secs_f64).sum::<f64>()
+                / samples.len() as f64
+                * 1000.0;
+            let p95 = samples[(samples.len() * 95 / 100).min(samples.len() - 1)];
+            println!(
+                "{label:<28} mean {mean:8.3} ms   p95 {:8.3} ms   max {:8.3} ms",
+                p95.as_secs_f64() * 1000.0,
+                samples.last().unwrap().as_secs_f64() * 1000.0
+            );
+        }
+
+        let ctx = egui::Context::default();
+        theme::apply(&ctx, Theme::Dark);
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1280.0, 800.0));
+
+        for count in [0usize, 1_000, 5_000] {
+            let mut app = EpsilonApp::default();
+            let columns = 50;
+            for index in 0..count {
+                let x = (index % columns) as f64 * 45.0;
+                let y = (index / columns) as f64 * 35.0;
+                let mut element = Element::new(ElementKind::Rectangle, x, y, 30.0, 22.0);
+                element.style.fill = DocumentColor::rgb(40, 90, 150);
+                app.document.add(element);
+            }
+
+            // Warm up font atlases and egui caches before sampling.
+            for _ in 0..3 {
+                let _ = frame_cost(&mut app, &ctx, screen);
+            }
+
+            let mut ui = Vec::new();
+            let mut tess = Vec::new();
+            for _ in 0..60 {
+                let (ui_time, tess_time) = frame_cost(&mut app, &ctx, screen);
+                ui.push(ui_time);
+                tess.push(tess_time);
+            }
+            summarise(&format!("{count} elements idle ui"), ui);
+            summarise(&format!("{count} elements idle tess"), tess);
+
+            let base = app.viewport;
+            let mut ui = Vec::new();
+            let mut tess = Vec::new();
+            for frame in 0..60 {
+                app.viewport.offset.x += 4.0;
+                app.viewport.offset.y += 2.0;
+                app.viewport.zoom = 0.5 * 1.02f64.powi(frame);
+                let (ui_time, tess_time) = frame_cost(&mut app, &ctx, screen);
+                ui.push(ui_time);
+                tess.push(tess_time);
+            }
+            summarise(&format!("{count} elements pan/zoom ui"), ui);
+            summarise(&format!("{count} elements pan/zoom tess"), tess);
+            app.viewport = base;
+            let _ = app;
+        }
+
+        // The per-frame paint-order allocation/sort on its own.
+        let mut document = epsilon_core::document::Document::new();
+        for _ in 0..5_000 {
+            document.add(Element::new(ElementKind::Rectangle, 0.0, 0.0, 10.0, 10.0));
+        }
+        let started = Instant::now();
+        for _ in 0..1_000 {
+            std::hint::black_box(document.paint_order());
+        }
+        println!(
+            "paint_order x1000 (5000 els)  total {:8.3} ms",
+            started.elapsed().as_secs_f64() * 1000.0
+        );
+
+        let started = Instant::now();
+        for _ in 0..100 {
+            std::hint::black_box(crate::icon::app_icon());
+        }
+        println!(
+            "icon rasterization            mean {:8.3} ms",
+            started.elapsed().as_secs_f64() * 1000.0 / 100.0
+        );
+    }
+
     #[test]
     fn styled_elements_render_headlessly() {
         let ctx = egui::Context::default();
@@ -6032,6 +6178,42 @@ mod tests {
             assert!((actual.width() - expected.width()).abs() < 0.01);
             assert!((actual.height() - expected.height()).abs() < 0.01);
         }
+    }
+
+    #[test]
+    fn offscreen_elements_are_culled_with_conservative_margins() {
+        let canvas = egui::Rect::from_min_size(egui::pos2(100.0, 100.0), egui::vec2(800.0, 600.0));
+        let viewport = Viewport::default();
+
+        let inside = Element::new(ElementKind::Rectangle, 20.0, 20.0, 50.0, 40.0);
+        assert!(element_is_visible(canvas, &viewport, &inside));
+        let far = Element::new(ElementKind::Rectangle, 5000.0, 5000.0, 50.0, 40.0);
+        assert!(!element_is_visible(canvas, &viewport, &far));
+
+        // Unrotated, this tall rectangle starts just past the right edge, but a
+        // quarter turn about its centre sweeps it across the canvas.
+        let mut rotated = Element::new(ElementKind::Rectangle, 802.0, -100.0, 10.0, 400.0);
+        assert!(
+            !canvas.intersects(world_rect_screen(canvas, &viewport, rotated.bounds())),
+            "precondition: unrotated bounds are off-screen"
+        );
+        rotated.angle = std::f64::consts::FRAC_PI_2;
+        assert!(element_is_visible(canvas, &viewport, &rotated));
+
+        // The arrowhead is wider than the shaft, so a shaft just outside the
+        // canvas still paints a visible tip.
+        let mut arrow = Element::line(Point::new(0.0, -4.0), Point::new(100.0, -4.0));
+        arrow.kind = ElementKind::Arrow;
+        assert!(!canvas.intersects(world_rect_screen(canvas, &viewport, arrow.world_bounds())));
+        assert!(element_is_visible(canvas, &viewport, &arrow));
+
+        // Text can re-wrap taller than the stored height, so it keeps one
+        // font size of slack and is only culled beyond that.
+        let mut text = Element::new(ElementKind::Text, 20.0, 601.0, 180.0, 20.0);
+        text.font_size = 20.0;
+        assert!(element_is_visible(canvas, &viewport, &text));
+        text.y = 800.0;
+        assert!(!element_is_visible(canvas, &viewport, &text));
     }
 
     #[test]

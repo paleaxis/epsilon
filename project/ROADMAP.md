@@ -874,13 +874,23 @@ diagnostics, both MIME types map to `epsilon.desktop`, and the installed
 command launched, imported the Excalidraw fixture and logged the read path
 (exit 124 under `timeout`).
 
-### [ ] 7.3 — Performance profiling
+### [x] 7.3 — Performance profiling
 
 Profile startup, idle CPU, pan/zoom frame time, 1k/5k-element scenes; fix
 measured bottlenecks.
 
 Acceptance: profiling numbers recorded before/after in `PROJECT_STATE.md`; no
 optimization claimed without measurement.
+
+Completed 2026-11-27: an ignored release-mode harness measures UI and
+tessellation time per frame for 0/1k/5k-element scenes (idle and pan/zoom), and
+startup/idle CPU were measured on the real process. Two measured bottlenecks
+were fixed: conservative off-screen culling in `paint_document` dropped a
+5,000-element frame from 3.49 ms to 0.79 ms (pan/zoom 3.35 → 1.18 ms), and the
+icon rasterizer's uniform-area fast paths plus stroke-segment pruning dropped
+icon generation from 127.8 ms to 15.4 ms, taking window startup from ~250 ms to
+75–102 ms. Idle CPU stays at ~0–1% (repaint-on-input only). Full before/after
+table and commands are in `PROJECT_STATE.md`.
 
 ### [ ] 7.4 — Release build and packaging docs
 
