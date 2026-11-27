@@ -1323,3 +1323,33 @@ introduced because a linear pass over 5,000 elements (and `paint_order` at
 11 µs) is far below the frame budget. Performance is machine- and
 scene-dependent; the harness is manual, so regressions are not gated in CI
 (there is no CI yet).
+
+---
+
+## D-060 — Self-contained release tarball with a layout-aware installer (2026-11-27)
+
+**Context.** Task 7.4 requires a validated release build, a binary-size report,
+a tarball layout, build-from-source instructions and the known platform
+requirements. The existing `install.sh` assumed a source checkout (assets in
+`packaging/`, binary in `target/release`), which does not work for a downloaded
+archive, and the project had no documented release artifact at all.
+
+**Decision.** `packaging/release.sh` derives the workspace version from
+`Cargo.toml` and the host architecture from `uname -m`, builds with
+`cargo build --release --locked -p epsilon-app`, and stages
+`epsilon-<version>-linux-<arch>/` containing the binary, `epsilon.desktop`,
+`epsilon.svg`, `epsilon-mime.xml`, `install.sh`, `LICENSE` and `README.md`.
+It writes the `.tar.gz` and a `.sha256` file into the gitignored `dist/`.
+`install.sh` looks for `epsilon.desktop` next to itself first and otherwise
+falls back to the checkout layout, and picks an adjacent `epsilon` binary when
+`EPSILON_BIN` is unset. The release profile stays thin-LTO, one codegen unit and
+stripped, with unwinding panic behaviour. README now documents the archive
+layout, requirements and the fact that GL/windowing libraries are loaded at
+runtime, so the build is explicitly not described as static.
+
+**Consequences.** The archive is self-contained and installs with one script on
+another machine; the same script still works from a checkout. The tarball is
+host-architecture-specific and was verified only on x86_64 Linux, with a fresh
+`HOME` rather than a fresh OS. Missing-portal and X11-only behaviour remain
+manual checks. In exchange, no packaging dependency (deb/rpm/AppImage) was
+added; native packages can be produced from this layout later if needed.

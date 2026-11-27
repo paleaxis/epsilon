@@ -4,6 +4,17 @@ Notable changes, newest first. Version sections are added at release time.
 
 ## [Unreleased]
 
+### Added — 2026-11-27 (task 7.4)
+
+- `packaging/release.sh` builds the release profile with `--locked` and writes
+  `dist/epsilon-<version>-linux-<arch>.tar.gz` plus a SHA-256 checksum. The
+  archive contains the binary, desktop entry, icon, MIME definitions,
+  `install.sh`, `LICENSE` and `README.md`.
+- `install.sh` now also installs from an unpacked tarball (assets and binary
+  next to the script), in addition to a source checkout.
+- README documents the tarball layout, build-from-source commands, runtime
+  requirements (OpenGL 3.3+, Wayland/X11, XDG Desktop Portal) and binary size.
+
 ### Changed — 2026-11-27 (task 7.3)
 
 - Canvas painting culls elements outside the viewport using rotated bounds with

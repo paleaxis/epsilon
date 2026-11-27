@@ -1,9 +1,9 @@
 # Project State
 
 Last updated: 2026-11-27
-Current stage: **Stage 7 — Desktop readiness** (7.1, 7.2 and 7.3 complete)
-Last completed task: **7.3 — Performance profiling**
-Next task: **7.4 — Release build and packaging docs**
+Current stage: **Stage 7 — Desktop readiness** (7.1–7.4 complete)
+Last completed task: **7.4 — Release build and packaging docs**
+Next task: **7.5 — Final usability verification and v0.1.0**
 
 ## Status
 
@@ -70,7 +70,11 @@ path passed on the command line opens the document or imports the scene at
 startup. Task 7.3 profiled startup, idle CPU and pan/zoom frames with 1k/5k
 scenes in release mode: startup fell from ~250 ms to ~77 ms after the icon
 rasterizer stopped supersampling uniform areas and pruned stroke segments, and
-off-screen culling cut a 5,000-element frame from ~3.5 ms to ~0.8 ms.
+off-screen culling cut a 5,000-element frame from ~3.5 ms to ~0.8 ms. Task 7.4
+adds a reproducible release tarball (`packaging/release.sh`), a distribution-
+aware `install.sh`, documented runtime requirements and a binary-size report;
+the packaged binary was launched from a fresh `HOME` and installed from the
+tarball into a temporary prefix.
 
 Repository layout:
 
@@ -107,7 +111,8 @@ packaging/
   epsilon.desktop           Linux launcher with .epsilon/.excalidraw associations
   epsilon-mime.xml          shared-mime-info definitions for both extensions
   epsilon.svg               scalable launcher icon (matches src/icon.rs)
-  install.sh                user-level install into $PREFIX (~/.local)
+  install.sh                user-level install into $PREFIX, from a checkout or tarball
+  release.sh                release build → dist/epsilon-<version>-linux-<arch>.tar.gz + .sha256
 ```
 
 Working UI actions:
@@ -297,9 +302,84 @@ the largest frame component at 5,000 elements (0.35–0.63 ms).
 | `cargo test -p epsilon-app --release -- --ignored --nocapture profile_frame_costs` | numbers in the table above |
 | `cargo build --release -p epsilon-app` + timed launches | window appeared after 75, 102 and 77 ms over three runs |
 
+## Release packaging (task 7.4)
+
+**Release profile.** The workspace keeps `[profile.release]` as `lto = "thin"`,
+`codegen-units = 1` and `strip = true`; it was validated with
+`cargo build --release --locked --workspace`. Panic strategy stays at the
+default unwind so the existing panic hook can log; switching to abort was not
+needed for size and would remove that final report.
+
+| Build | Size |
+| --- | --- |
+| `target/debug/epsilon` | 268,959,640 bytes (~256 MiB, unstripped, debug info) |
+| `target/release/epsilon` | 11,233,392 bytes (~10.7 MiB, stripped) |
+| `dist/epsilon-0.1.0-linux-x86_64.tar.gz` | 4,808,287 bytes (~4.6 MiB) |
+
+**Tarball layout.** `packaging/release.sh` reads the workspace version, runs
+`cargo build --release --locked -p epsilon-app`, stages
+`epsilon-<version>-linux-<arch>/` and writes the archive plus a SHA-256 file
+into `dist/` (gitignored). The directory contains:
+
+```
+epsilon-0.1.0-linux-x86_64/
+  epsilon              release binary (stripped)
+  epsilon.desktop      launcher
+  epsilon.svg          scalable icon
+  epsilon-mime.xml     shared-mime-info definitions
+  install.sh           installs the adjacent binary and assets
+  LICENSE
+  README.md
+```
+
+`install.sh` now detects its layout: when `epsilon.desktop` sits next to it (the
+tarball), it installs the adjacent `epsilon` binary and assets; in a checkout it
+uses `packaging/` and `target/release/epsilon` as before. `EPSILON_BIN` still
+overrides the binary and `PREFIX` the install root.
+
+**Runtime requirements.** `ldd target/release/epsilon` lists only `libc`,
+`libm` and `libgcc_s`; OpenGL and the Wayland/X11 client libraries are loaded
+at runtime by `glow`/`winit`, so the build is not fully static and must not be
+described as such. The app needs an OpenGL 3.3+ driver and a Wayland or X11
+session (`XDG_RUNTIME_DIR` on Wayland). Open/Save/Export dialogs go through the
+XDG Desktop Portal (`rfd`'s default `xdg-portal` backend); without a running
+portal those commands report an error toast and leave the document untouched.
+Copy as Image prefers Wayland data-control and falls back to X11. UI fonts are
+embedded, so no system font packages are required. Settings, logs and recovery
+files live under `$XDG_DATA_HOME/epsilon`.
+
+### Verified commands and results (task 7.4)
+
+| Command | Result |
+| --- | --- |
+| `cargo fmt --all -- --check` | exit 0 |
+| `cargo clippy --workspace --all-targets -- -D warnings` | exit 0 |
+| `cargo test --workspace` | **270 passed, 0 failed** (152 app, 113 core, 5 compat); 1 ignored profiling harness |
+| `cargo build --workspace` | success, no warnings |
+| `cargo build --release --locked --workspace` | success |
+| `timeout 8 ./target/debug/epsilon` | exit 124 (alive, no stderr) |
+| `HOME=<fresh> timeout 8 ./target/release/epsilon` | exit 124; session record written under the fresh `$XDG_DATA_HOME/epsilon/logs` |
+| `./packaging/release.sh` | exit 0; tarball and `.sha256` written |
+| `sha256sum -c epsilon-0.1.0-linux-x86_64.tar.gz.sha256` | OK |
+| `tar -tzf …` | expected seven entries; `epsilon` and `install.sh` are executable |
+| tarball binary from `/tmp` with fresh `HOME` | exit 124; session record written (no CWD dependency) |
+| `PREFIX=<tmp> <tarball>/install.sh` | installed adjacent binary, desktop entry, icon and MIME files |
+| `desktop-file-validate <tmp>/share/applications/epsilon.desktop` | exit 0, no diagnostics |
+| MIME cache check | both `application/x-epsilon` and `application/vnd.excalidraw+json` map to `epsilon.desktop` |
+| installed `epsilon scene.excalidraw` with fresh `HOME` | exit 124; log records the read, 4 imported elements and 1 skipped |
+
+**Manual checks still required.** The “clean profile” above shares this host's
+kernel, GPU, Mesa stack, desktop portal and Wayland compositor; it has no prior
+Epsilon settings or data. A different distribution/architecture, a machine
+without a portal, and an X11-only session were not exercised. See the manual
+checklist below.
+
 ## Features implemented
 
 - Embedded window icon generated from code (no external image at runtime).
+- Reproducible release pipeline: `packaging/release.sh` writes a versioned,
+  architecture-named tarball with checksums and the full install set.
+- `install.sh` works both from a source checkout and from an unpacked tarball.
 - Off-screen element culling in the canvas paint path with conservative margins
   for rough strokes, arrowheads and text.
 - Linux packaging: desktop launcher, scalable icon, shared-mime-info types for
@@ -574,6 +654,25 @@ session, icon rendering and file-manager click were not exercised:
 
 Status: **pending** — the install was validated in a temporary prefix only.
 
+## Manual acceptance checklist — release tarball (task 7.4)
+
+Automated checks cover the release build, archive contents, checksum, launch
+from a fresh `HOME`, installation into a temporary prefix, desktop-entry
+validation and MIME mapping. These remain for a human on other systems:
+
+- [ ] On a machine without a Rust toolchain, unpack the tarball, run
+  `./install.sh`, and launch `epsilon` from the application menu.
+- [ ] Repeat on a second distribution and (if available) a non-x86_64 host
+  built from source with `./packaging/release.sh`.
+- [ ] On a session without an XDG Desktop Portal, confirm File → Open still
+  shows an error toast instead of failing silently or crashing.
+- [ ] In an X11-only session, confirm the window starts and Copy as Image falls
+  back to X11 clipboard data.
+- [ ] Confirm the archive's `LICENSE` and `README.md` match the installed
+  version and that `sha256sum -c` passes after copying the files.
+
+Status: **pending** — only this host with a clean `HOME` was used.
+
 ## Known issues / limitations
 
 - Edit contains Undo/Redo, Cut/Copy/Paste, Select All, Duplicate, Delete, Group,
@@ -630,6 +729,15 @@ Status: **pending** — the install was validated in a temporary prefix only.
   caught automatically. Startup is measured externally via compositor window
   polling (~10 ms granularity) and includes process launch, GL/window setup and
   the icon; idle CPU varies with system load.
+- The release binary is not statically linked: `ldd` shows `libc`, `libm` and
+  `libgcc_s`, while GL and windowing libraries are loaded at runtime. Package
+  docs say so; do not claim a fully static build.
+- Release tarballs are built for the host architecture (`uname -m`); only
+  x86_64 Linux was tested. A clean profile here means a fresh `HOME` on this
+  machine, not a fresh OS install, and a missing desktop portal was not tried.
+- The release profile keeps `panic = "unwind"`; binary size was 10.7 MiB
+  stripped. No further size tuning (for example `panic = "abort"` or removing
+  unused font data) was attempted.
 - No CI; local verification only. No visual/screenshot review performed.
 - Window/panel restore relies on eframe/egui and was not re-measured under niri.
 - Project license: GPL-3.0 (`LICENSE`); manifests declare `GPL-3.0-only`.
@@ -638,7 +746,7 @@ Status: **pending** — the install was validated in a temporary prefix only.
 
 1. Read `AGENTS.md`, `project/ROADMAP.md`, this file, `project/DECISIONS.md`.
 2. `git status` must be clean; run `cargo test --workspace` for the baseline.
-3. Start with the first incomplete task, 7.4 — Release build and packaging docs.
+3. Start with the first incomplete task, 7.5 — Final usability verification and v0.1.0.
 4. Verify format, clippy, tests, build, and `timeout 8 ./target/debug/epsilon`.
 5. Update this file, `ROADMAP.md`, `CHANGELOG.md`, then commit and push.
 

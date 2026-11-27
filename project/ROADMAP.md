@@ -892,13 +892,26 @@ icon generation from 127.8 ms to 15.4 ms, taking window startup from ~250 ms to
 75–102 ms. Idle CPU stays at ~0–1% (repaint-on-input only). Full before/after
 table and commands are in `PROJECT_STATE.md`.
 
-### [ ] 7.4 — Release build and packaging docs
+### [x] 7.4 — Release build and packaging docs
 
 Release profile validation, binary size report, tarball layout, build-from-source
 instructions, known platform requirements (GL, Wayland/X11).
 
 Acceptance: `cargo build --release` verified; packaged binary runs on a clean
 user profile; docs accurate.
+
+Completed 2026-11-27: `cargo build --release --locked --workspace` succeeds; the
+stripped binary is 11,233,392 bytes (10.7 MiB) and the tarball 4,808,287 bytes
+(4.6 MiB). `packaging/release.sh` writes `dist/epsilon-0.1.0-linux-x86_64.tar.gz`
+plus a SHA-256 file with the binary, desktop entry, icon, MIME definitions,
+`install.sh`, `LICENSE` and `README.md`. `install.sh` detects the tarball
+layout and installs the adjacent binary/assets; validated into a temporary
+prefix (desktop entry and MIME cache clean). The tarball binary and the
+installed command ran from a fresh `HOME` (exit 124, session/import logged).
+`README.md` documents the tarball layout, build-from-source steps, runtime
+requirements (OpenGL 3.3+, Wayland/X11, XDG portal) and the fact that the
+binary is dynamically linked and not static. Values are in `PROJECT_STATE.md`;
+other distributions/architectures and a portal-less session remain manual.
 
 ### [ ] 7.5 — Final usability verification and v0.1.0
 

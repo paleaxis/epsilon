@@ -10,10 +10,27 @@
 # a system-wide install, and set EPSILON_BIN to install a binary from elsewhere.
 set -eu
 
-root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+root=$(CDPATH= cd -- "$here/.." && pwd)
 prefix=${PREFIX:-$HOME/.local}
 datadir=${DATADIR:-$prefix/share}
-binary=${EPSILON_BIN:-$root/target/release/epsilon}
+
+# This script ships both in the source tree (assets in packaging/, binary in
+# target/release) and inside the release tarball (everything next to it).
+if [ -f "$here/epsilon.desktop" ]; then
+    assets=$here
+else
+    assets=$root/packaging
+fi
+
+binary=${EPSILON_BIN:-}
+if [ -z "$binary" ]; then
+    if [ -f "$here/epsilon" ]; then
+        binary=$here/epsilon
+    else
+        binary=$root/target/release/epsilon
+    fi
+fi
 
 if [ ! -f "$binary" ]; then
     printf 'error: binary not found: %s\n' "$binary" >&2
@@ -22,11 +39,11 @@ if [ ! -f "$binary" ]; then
 fi
 
 install -Dm755 "$binary" "$prefix/bin/epsilon"
-install -Dm644 "$root/packaging/epsilon.desktop" \
+install -Dm644 "$assets/epsilon.desktop" \
     "$datadir/applications/epsilon.desktop"
-install -Dm644 "$root/packaging/epsilon.svg" \
+install -Dm644 "$assets/epsilon.svg" \
     "$datadir/icons/hicolor/scalable/apps/epsilon.svg"
-install -Dm644 "$root/packaging/epsilon-mime.xml" \
+install -Dm644 "$assets/epsilon-mime.xml" \
     "$datadir/mime/packages/epsilon.xml"
 
 # Indexes are optional: a missing tool must not fail an otherwise good install.
