@@ -430,9 +430,11 @@ tag until those are ticked or accepted as limitations in this file.
   and documented paint-order semantics.
 - App-held document rendering with paint order and screen-space projection.
 - Rectangle, ellipse, diamond, line, arrow, freehand and text tools with live
-  previews and world-space geometry. Linear tools store endpoints and support
-  Shift-constrained 15-degree angles; freehand strokes are smoothed and
-  simplified; text supports wrapping, alignment and in-place editing.
+  previews and world-space geometry. Shift makes rectangle, ellipse and diamond
+  drags square (circles) in the drag direction and snaps lines to 15-degree
+  steps; Ctrl draws any shape from its press point as the center. Freehand
+  strokes are smoothed and simplified; text supports wrapping, alignment and
+  in-place editing.
 - Rotation-aware hit testing, topmost click selection, additive toggling and
   marquee selection with screen-space outlines.
 - Move and eight-handle resize with multi-element transforms, Shift aspect lock,

@@ -145,12 +145,64 @@ fn drawing_kind(tool: Tool) -> Option<ElementKind> {
     }
 }
 
-/// Applies the active drag's optional constraint to its endpoint.
-fn drawing_end(kind: ElementKind, start: Point, end: Point, constrain: bool) -> Point {
-    if constrain && matches!(kind, ElementKind::Line | ElementKind::Arrow) {
-        constrain_angle(start, end, LINE_ANGLE_STEP)
-    } else {
-        end
+/// Geometry of a shape being dragged out. `start` is the fixed anchor and
+/// `end` the pointer-side corner.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct DraftDrag {
+    start: Point,
+    end: Point,
+}
+
+/// Resolves a draft drag against its modifiers. Shift makes rectangles,
+/// ellipses and diamonds square (circles) and snaps lines to 15-degree steps;
+/// Ctrl grows the shape from its press point instead of dragging a corner.
+fn draft_drag(
+    kind: ElementKind,
+    press: Point,
+    pointer: Point,
+    constrain: bool,
+    from_center: bool,
+) -> DraftDrag {
+    match kind {
+        ElementKind::Line | ElementKind::Arrow => {
+            let end = if constrain {
+                constrain_angle(press, pointer, LINE_ANGLE_STEP)
+            } else {
+                pointer
+            };
+            let start = if from_center {
+                Point::new(2.0 * press.x - end.x, 2.0 * press.y - end.y)
+            } else {
+                press
+            };
+            DraftDrag { start, end }
+        }
+        ElementKind::Rectangle | ElementKind::Ellipse | ElementKind::Diamond => {
+            let mut dx = pointer.x - press.x;
+            let mut dy = pointer.y - press.y;
+            if constrain {
+                let size = dx.abs().max(dy.abs());
+                // Keep the drag direction: a square grows toward the pointer
+                // on both axes instead of always down/right.
+                dx = size.copysign(dx);
+                dy = size.copysign(dy);
+            }
+            if from_center {
+                DraftDrag {
+                    start: Point::new(press.x - dx, press.y - dy),
+                    end: Point::new(press.x + dx, press.y + dy),
+                }
+            } else {
+                DraftDrag {
+                    start: press,
+                    end: Point::new(press.x + dx, press.y + dy),
+                }
+            }
+        }
+        _ => DraftDrag {
+            start: press,
+            end: pointer,
+        },
     }
 }
 
@@ -3998,6 +4050,7 @@ impl EpsilonApp {
         let primary_pressed = ctx.input(|input| input.pointer.primary_pressed());
         let space_down = ctx.input(|input| input.key_down(egui::Key::Space));
         let shift_down = ctx.input(|input| input.modifiers.shift);
+        let from_center = ctx.input(|input| input.modifiers.ctrl || input.modifiers.command);
         let typing = ctx.egui_wants_keyboard_input();
 
         if let PointerMode::Freehanding { last } = self.pointer_mode {
@@ -4037,8 +4090,8 @@ impl EpsilonApp {
                     current,
                 };
             } else {
-                let end = drawing_end(kind, start, current, shift_down);
-                self.commit_shape(kind, start, end);
+                let draft = draft_drag(kind, start, current, shift_down, from_center);
+                self.commit_shape(kind, draft.start, draft.end);
                 self.pointer_mode = PointerMode::Idle;
             }
             return;
@@ -4781,6 +4834,7 @@ impl EpsilonApp {
         canvas_rect: egui::Rect,
         accent: egui::Color32,
         constrain: bool,
+        from_center: bool,
     ) {
         if let PointerMode::Dragging {
             kind,
@@ -4788,7 +4842,8 @@ impl EpsilonApp {
             current,
         } = self.pointer_mode
         {
-            let rect = draft_screen_rect(canvas_rect, &self.viewport, start, current);
+            let draft = draft_drag(kind, start, current, constrain, from_center);
+            let rect = draft_screen_rect(canvas_rect, &self.viewport, draft.start, draft.end);
             let fill = accent.gamma_multiply(0.18);
             match kind {
                 ElementKind::Rectangle => {
@@ -4811,7 +4866,7 @@ impl EpsilonApp {
                     ));
                 }
                 ElementKind::Diamond => {
-                    let bounds = Rect::from_corners(start, current);
+                    let bounds = Rect::from_corners(draft.start, draft.end);
                     let points = diamond_screen_points(canvas_rect, &self.viewport, bounds);
                     painter.add(egui::Shape::convex_polygon(
                         points.clone(),
@@ -4824,26 +4879,24 @@ impl EpsilonApp {
                     ));
                 }
                 ElementKind::Line => {
-                    let end = drawing_end(kind, start, current, constrain);
                     painter.line_segment(
                         [
-                            world_to_screen_pos(canvas_rect, &self.viewport, start),
-                            world_to_screen_pos(canvas_rect, &self.viewport, end),
+                            world_to_screen_pos(canvas_rect, &self.viewport, draft.start),
+                            world_to_screen_pos(canvas_rect, &self.viewport, draft.end),
                         ],
                         egui::Stroke::new(1.0, accent),
                     );
                 }
                 ElementKind::Arrow => {
-                    let end = drawing_end(kind, start, current, constrain);
                     painter.line_segment(
                         [
-                            world_to_screen_pos(canvas_rect, &self.viewport, start),
-                            world_to_screen_pos(canvas_rect, &self.viewport, end),
+                            world_to_screen_pos(canvas_rect, &self.viewport, draft.start),
+                            world_to_screen_pos(canvas_rect, &self.viewport, draft.end),
                         ],
                         egui::Stroke::new(1.0, accent),
                     );
                     if let Some(head) =
-                        arrowhead_screen_points(canvas_rect, &self.viewport, start, end)
+                        arrowhead_screen_points(canvas_rect, &self.viewport, draft.start, draft.end)
                     {
                         painter.add(egui::Shape::convex_polygon(
                             head,
@@ -5072,8 +5125,13 @@ impl EpsilonApp {
 
                 self.paint_document(ui.painter(), rect);
                 let accent = ui.visuals().hyperlink_color;
-                let shift_down = ui.ctx().input(|input| input.modifiers.shift);
-                self.paint_draft(ui.painter(), rect, accent, shift_down);
+                let (shift_down, from_center) = ui.ctx().input(|input| {
+                    (
+                        input.modifiers.shift,
+                        input.modifiers.ctrl || input.modifiers.command,
+                    )
+                });
+                self.paint_draft(ui.painter(), rect, accent, shift_down, from_center);
                 self.paint_selection(ui.painter(), rect, accent);
 
                 // Prove the coordinate pipeline: the world origin is projected
@@ -5506,18 +5564,86 @@ mod tests {
     }
 
     #[test]
-    fn line_constraint_applies_only_to_constrained_lines() {
+    fn line_constraint_applies_only_to_linear_tools() {
         let start = Point::new(10.0, 20.0);
         let end = Point::new(110.0, 30.0);
 
-        let constrained = drawing_end(ElementKind::Line, start, end, true);
-        assert!((constrained.y - start.y).abs() < 1e-9);
-        assert_eq!(drawing_end(ElementKind::Rectangle, start, end, true), end);
-        assert_eq!(drawing_end(ElementKind::Line, start, end, false), end);
+        let constrained = draft_drag(ElementKind::Line, start, end, true, false);
+        assert_eq!(constrained.start, start);
+        assert!((constrained.end.y - start.y).abs() < 1e-9);
         assert_eq!(
-            drawing_end(ElementKind::Arrow, start, end, true),
-            constrained
+            draft_drag(ElementKind::Line, start, end, false, false).end,
+            end
         );
+        assert_eq!(
+            draft_drag(ElementKind::Arrow, start, end, true, false).end,
+            constrained.end
+        );
+    }
+
+    #[test]
+    fn shift_makes_shape_drags_square_in_the_drag_direction() {
+        let press = Point::new(100.0, 100.0);
+
+        let draft = draft_drag(
+            ElementKind::Ellipse,
+            press,
+            Point::new(180.0, 130.0),
+            true,
+            false,
+        );
+        assert_eq!(draft.start, press);
+        assert_eq!(draft.end, Point::new(180.0, 180.0));
+
+        // Reverse drags stay square toward the pointer, not always down/right.
+        let draft = draft_drag(
+            ElementKind::Rectangle,
+            press,
+            Point::new(80.0, 140.0),
+            true,
+            false,
+        );
+        assert_eq!(draft.end, Point::new(60.0, 140.0));
+    }
+
+    #[test]
+    fn ctrl_draws_shapes_from_the_press_point_as_center() {
+        let press = Point::new(100.0, 100.0);
+
+        let draft = draft_drag(
+            ElementKind::Ellipse,
+            press,
+            Point::new(140.0, 120.0),
+            true,
+            true,
+        );
+        assert_eq!(draft.start, Point::new(60.0, 60.0));
+        assert_eq!(draft.end, Point::new(140.0, 140.0));
+
+        let line = draft_drag(
+            ElementKind::Line,
+            press,
+            Point::new(130.0, 100.0),
+            false,
+            true,
+        );
+        assert_eq!(line.start, Point::new(70.0, 100.0));
+        assert_eq!(line.end, Point::new(130.0, 100.0));
+    }
+
+    #[test]
+    fn shape_drags_without_modifiers_keep_the_press_and_pointer_corners() {
+        let press = Point::new(10.0, 20.0);
+        let pointer = Point::new(50.0, 90.0);
+        for kind in [
+            ElementKind::Rectangle,
+            ElementKind::Ellipse,
+            ElementKind::Diamond,
+        ] {
+            let draft = draft_drag(kind, press, pointer, false, false);
+            assert_eq!(draft.start, press);
+            assert_eq!(draft.end, pointer);
+        }
     }
 
     #[test]

@@ -4,6 +4,13 @@ Notable changes, newest first. Version sections are added at release time.
 
 ## [Unreleased]
 
+### Changed — 2026-11-27 (shape creation modifiers)
+
+- Shift now makes rectangle, ellipse and diamond drags square (circles) in the
+  drag direction, in addition to snapping lines and arrows to 15-degree steps.
+- Ctrl draws shapes from the press point as their center; the live preview
+  follows both modifiers.
+
 ### Added — 2026-11-27 (task 7.5, in progress)
 
 - `project/RELEASE_NOTES_v0.1.0.md` drafts the v0.1.0 release checklist with
