@@ -4,6 +4,18 @@ Notable changes, newest first. Version sections are added at release time.
 
 ## [Unreleased]
 
+### Added — 2026-11-27 (task 7.2)
+
+- Embedded window icon rasterized at startup from code (rounded whiteboard plus
+  an epsilon mark); no external image asset is read at runtime.
+- Linux packaging in `packaging/`: `.desktop` launcher, scalable `epsilon.svg`,
+  shared-mime-info definitions for `application/x-epsilon` (`*.epsilon`) and
+  `application/vnd.excalidraw+json` (`*.excalidraw`), and `install.sh` for a
+  user-level install under `~/.local`.
+- `epsilon <file>` opens a document at startup; `.excalidraw` goes through the
+  importer, other paths through the native reader, and failures use the normal
+  toast/log surface.
+
 ### Added — 2026-11-27 (task 7.1)
 
 - Unified non-blocking error surface: file, clipboard and history failures now

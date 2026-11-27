@@ -1,0 +1,15 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Epsilon
+GenericName=Whiteboard
+Comment=Fast, offline-first native whiteboard
+Exec=epsilon %F
+TryExec=epsilon
+Icon=epsilon
+Terminal=false
+Categories=Graphics;
+Keywords=drawing;diagram;sketch;canvas;excalidraw;
+MimeType=application/x-epsilon;application/vnd.excalidraw+json;
+StartupNotify=true
+StartupWMClass=epsilon

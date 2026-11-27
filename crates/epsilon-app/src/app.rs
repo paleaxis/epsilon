@@ -1185,11 +1185,30 @@ const KEYBINDINGS: &[KeyBinding] = &[
 ];
 
 impl EpsilonApp {
-    pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
+    /// Builds the app and, when a launcher or file manager passed a path,
+    /// opens that document or Excalidraw scene instead of offering recovery.
+    pub fn with_startup_file(cc: &eframe::CreationContext<'_>, startup: Option<PathBuf>) -> Self {
         let mut app = Self::from_storage(cc.storage);
         theme::apply(&cc.egui_ctx, app.theme);
-        app.offer_recovery();
+        match startup {
+            Some(path) => app.open_startup_file(&path),
+            None => {
+                app.offer_recovery();
+            }
+        }
         app
+    }
+
+    /// Loads a startup path, using the extension to pick the native reader or
+    /// the Excalidraw importer. Failures surface through the usual toast/log
+    /// path, leaving the empty welcome state usable.
+    fn open_startup_file(&mut self, path: &Path) {
+        self.welcome_open = false;
+        if is_excalidraw_path(path) {
+            self.import_excalidraw_from_path(path);
+        } else {
+            self.open_from_path(path);
+        }
     }
 
     /// Restores app-owned settings. Missing or invalid storage falls back to
@@ -5114,6 +5133,14 @@ impl EpsilonApp {
     }
 }
 
+/// Excalidraw scenes are the one foreign format the app can open directly, so
+/// the launcher's file association routes them through the importer.
+fn is_excalidraw_path(path: &Path) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("excalidraw"))
+}
+
 /// Appends the native extension when the chosen name has none or a different
 /// one, matching common Save-As behaviour.
 fn with_document_extension(path: PathBuf) -> PathBuf {
@@ -6805,6 +6832,69 @@ mod tests {
             Some(FileFeedback::New(ref message))
                 if message.contains("1 elements") && message.contains("1 unsupported")
         ));
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn startup_path_routes_excalidraw_and_native_files() {
+        assert!(is_excalidraw_path(Path::new("scene.excalidraw")));
+        assert!(is_excalidraw_path(Path::new("scene.EXCALIDRAW")));
+        assert!(!is_excalidraw_path(Path::new("scene.epsilon")));
+        assert!(!is_excalidraw_path(Path::new("scene.json")));
+    }
+
+    #[test]
+    fn startup_native_file_loads_and_closes_the_welcome_panel() {
+        let dir = file_test_dir("startup-native");
+        let path = dir.join("startup.epsilon");
+        let mut writer = selection_app();
+        assert!(writer.save_to_path(&path));
+        let expected = writer.document.clone();
+
+        let mut app = EpsilonApp::default();
+        assert!(app.welcome_open);
+        app.open_startup_file(&path);
+        assert_eq!(app.document, expected);
+        assert_eq!(app.file_path.as_deref(), Some(path.as_path()));
+        assert!(
+            !app.welcome_open,
+            "an opened document replaces the welcome panel"
+        );
+        assert!(!app.is_dirty());
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn startup_excalidraw_file_is_imported_as_unsaved() {
+        let dir = file_test_dir("startup-excalidraw");
+        let path = dir.join("startup.excalidraw");
+        std::fs::write(
+            &path,
+            r##"{"type":"excalidraw","version":2,"elements":[{"id":"r1","type":"rectangle","x":1,"y":2,"width":30,"height":40,"strokeColor":"#ff0000","backgroundColor":"transparent"}],"appState":{}}"##,
+        )
+        .expect("write fixture");
+
+        let mut app = EpsilonApp::default();
+        app.open_startup_file(&path);
+        assert_eq!(app.document.elements.len(), 1);
+        assert!(app.file_path.is_none(), "imported scenes stay unsaved");
+        assert!(!app.welcome_open);
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn startup_failure_leaves_an_usable_empty_document() {
+        let dir = file_test_dir("startup-missing");
+        let path = dir.join("missing.epsilon");
+
+        let mut app = EpsilonApp::default();
+        app.open_startup_file(&path);
+        assert!(app.document.elements.is_empty());
+        assert!(app.file_path.is_none());
+        assert!(matches!(app.file_feedback, Some(FileFeedback::Error(_))));
 
         std::fs::remove_dir_all(&dir).ok();
     }

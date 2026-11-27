@@ -3,8 +3,8 @@
 A fast, lightweight, offline-first native desktop whiteboard written entirely in
 Rust (egui + eframe). Inspired by Excalidraw; not a wrapper and not a web app.
 
-**Status: early foundation.** The workspace builds and launches a native window.
-No drawing features are implemented yet — see `project/ROADMAP.md` for the
+**Status: pre-release.** Drawing, editing, history, save/open, recovery and
+PNG/SVG/Excalidraw export work natively. See `project/ROADMAP.md` for the
 current task and progress.
 
 ## Requirements
@@ -19,6 +19,25 @@ cargo build            # debug build of the epsilon binary
 cargo run              # launch the desktop app
 cargo test --workspace # engine unit tests
 cargo build --release  # optimized binary in target/release/epsilon
+```
+
+## Install the desktop launcher
+
+```bash
+cargo build --release
+./packaging/install.sh   # user install under ~/.local
+```
+
+The script installs the binary, desktop entry, scalable icon and the
+`.epsilon`/`.excalidraw` MIME types, then refreshes the desktop and MIME
+indexes. Add `~/.local/bin` to `PATH` so the launcher's `Exec=epsilon` resolves.
+`PREFIX` selects another install root and `EPSILON_BIN` another binary.
+
+A file given on the command line opens at startup:
+
+```bash
+epsilon drawing.epsilon
+epsilon scene.excalidraw
 ```
 
 ## Project layout

@@ -1257,3 +1257,37 @@ by tests because `main` is what initialises it. A future structured logger can
 replace the module internals without changing call sites. The toast appearance
 and dismiss interaction are only covered headlessly; a live note-window review
 remains manual.
+
+---
+
+## D-058 — Code-generated window icon and source-tree Linux packaging (2026-11-27)
+
+**Context.** Task 7.2 requires an embedded window icon, a desktop launcher,
+`.epsilon`/`.excalidraw` file associations and a CLI argument that opens a file.
+The project must stay lightweight and must not read an icon asset at runtime.
+The desktop environment, however, can only load a launcher icon from an
+installed icon theme, so the window and launcher artwork have two different
+delivery paths.
+
+**Decision.** The window icon is rasterized in `crates/epsilon-app/src/icon.rs`
+at startup: a 256×256 straight-alpha RGBA buffer drawn with rounded-rectangle
+and polyline-distance math (4×4 supersampling), passed to
+`ViewportBuilder::with_icon`. It adds no dependency and no runtime file. The
+same design is authored as `packaging/epsilon.svg` for the launcher. Packaging
+lives in `packaging/`: `epsilon.desktop` uses `Exec=epsilon %F`, `Icon=epsilon`
+and both MIME types; `epsilon-mime.xml` registers `application/x-epsilon` for
+`*.epsilon` and `application/vnd.excalidraw+json` for `*.excalidraw`;
+`install.sh` copies the binary, entry, icon and MIME file into `$PREFIX`
+(default `~/.local`), runs the desktop/MIME/icon caches when available, and
+never requires root. `main` passes the first positional argument into
+`EpsilonApp::with_startup_file`, which imports `.excalidraw` (case-insensitive)
+and natively opens everything else instead of offering crash recovery.
+
+**Consequences.** The binary carries its window icon and needs no asset path.
+Installing is one script invocation, and removing the prefix removes it. The
+`*.excalidraw` glob may claim files previously associated with another editor;
+that is visible in the desktop settings and was accepted for the roadmap's file
+association requirement. The SVG and the procedural icon share a design but are
+maintained separately. Automated checks validate the desktop entry and MIME
+cache in a temporary prefix and launch the installed command with a scene; icon
+appearance, application-menu launch and file-manager clicks remain manual.

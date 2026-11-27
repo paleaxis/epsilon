@@ -1,9 +1,9 @@
 # Project State
 
 Last updated: 2026-11-27
-Current stage: **Stage 7 — Desktop readiness** (Stage 6 complete; 7.1 done)
-Last completed task: **7.1 — Error handling and logging pass**
-Next task: **7.2 — Icon, desktop entry, file associations**
+Current stage: **Stage 7 — Desktop readiness** (7.1 and 7.2 complete)
+Last completed task: **7.2 — Icon, desktop entry, file associations**
+Next task: **7.3 — Performance profiling**
 
 ## Status
 
@@ -63,7 +63,11 @@ canvas when nothing is selected) on the system clipboard as a PNG through
 otherwise. Every failure now lands on one non-blocking toast surface (errors
 and warnings, dismissible and auto-expiring) and in a rotating local log file,
 while the status bar keeps only the last successful result. Stage 6 is
-complete; Stage 7 desktop readiness has started.
+complete. Stage 7 now has desktop integration: the window icon is rasterized in
+code, `packaging/` provides a desktop entry, MIME types for `.epsilon` and
+`.excalidraw`, a scalable launcher icon and a user install script, and a file
+path passed on the command line opens the document or imports the scene at
+startup.
 
 Repository layout:
 
@@ -85,7 +89,8 @@ crates/epsilon-core/        UI-independent engine (no egui dependency)
   src/history.rs            reversible commands, transactions, bounded undo/redo + 9 tests
   src/clipboard.rs          clipboard JSON payload, paste preparation, group-ID refresh + 7 tests
 crates/epsilon-app/         eframe desktop shell
-  src/main.rs               native entry point (persist_window enabled)
+  src/main.rs               native entry point (persist_window, icon, CLI file argument)
+  src/icon.rs               procedurally rasterized window icon + 4 tests
   src/layout.rs             shell size budgets + compile-time assertions
   src/theme.rs              semantic palettes, Visuals setup, serializable Theme
   src/tools.rs              Tool enum, shortcuts, painted icons, tool buttons
@@ -95,6 +100,11 @@ crates/epsilon-app/         eframe desktop shell
   src/notices.rs            non-blocking error/warning toast surface + 5 tests
   src/svg.rs                deterministic SVG exporter + 4 tests
   src/app.rs                EpsilonApp, menus, toolbar, tool state, history wiring, settings
+packaging/
+  epsilon.desktop           Linux launcher with .epsilon/.excalidraw associations
+  epsilon-mime.xml          shared-mime-info definitions for both extensions
+  epsilon.svg               scalable launcher icon (matches src/icon.rs)
+  install.sh                user-level install into $PREFIX (~/.local)
 ```
 
 Working UI actions:
@@ -193,36 +203,41 @@ Other shell behavior:
   `Context::egui_wants_keyboard_input()`; `cc.storage` is a field.
 - Remote: `origin git@github.com/paleaxis/epsilon.git`, branch `main`.
 
-## Verified commands and results (task 7.1)
+## Verified commands and results (task 7.2)
 
 | Command | Result |
 | --- | --- |
 | `cargo fmt --all -- --check` | exit 0 |
 | `cargo clippy --workspace --all-targets -- -D warnings` | exit 0 |
-| `cargo test --workspace` | **258 passed, 0 failed** (140 app, 113 core, 5 compat) |
+| `cargo test --workspace` | **269 passed, 0 failed** (151 app, 113 core, 5 compat) |
 | `cargo build --workspace` | success, no warnings |
 | `timeout 8 ./target/debug/epsilon` | exit 124 (alive, no stderr) |
+| `PREFIX=<tmp> EPSILON_BIN=./target/debug/epsilon packaging/install.sh` | installed binary, desktop entry, icon and MIME files |
+| `desktop-file-validate <tmp>/share/applications/epsilon.desktop` | exit 0, no diagnostics |
+| `grep application/(x-epsilon\|vnd.excalidraw+json) <tmp>/share/applications/mimeinfo.cache` | both types map to `epsilon.desktop` |
+| `PATH=<tmp>/bin:$PATH timeout 8 epsilon crates/epsilon-core/tests/fixtures/scene.excalidraw` | exit 124 (alive); log recorded `import: read …scene.excalidraw`, 4 elements imported, 1 skipped |
+| `timeout 8 ./target/debug/epsilon /tmp/does-not-exist.epsilon` | exit 124 (alive); log recorded the open failure with the full path |
 
-Task 7.1 adds the rotating log and the toast surface. Tests cover UTC timestamp
-formatting (epoch, leap day), newline sanitising, record content, size-triggered
-rotation with bounded siblings, toast dedupe/cap/expiry, a headless toast
-render, and the app wiring: a forced save failure produces exactly one toast and
-a successful save none. The native launch wrote
-`<app data>/logs/epsilon.log` with a session-start record; the file grew across
-launches. Production code has no `unwrap`/`expect` outside tests (grep-checked).
-One pre-existing flaky assertion surfaced while running the suite repeatedly:
-the task 6.5 RGBA test required the crop-corner pixel to be exactly transparent,
-but the crop edge clips the stroke's anti-aliasing and the value depends on the
-seeded rough stroke. The corner assertion was replaced by a deterministic
-`unpremultiply` unit test, and the RGBA test now checks dimensions and straight
-color/alpha; repeated full-suite and single-test runs pass. The live toast
-appearance, dismiss button and panic-log path were not clicked or forced in a
-visible window (see the 7.1 manual checklist). Earlier pending manual items
-(SVG visual comparison, export dialog interaction, clipboard external paste,
-Excalidraw real-app import) remain unchanged.
+Task 7.2 adds `icon.rs`, which rasterizes a 256×256 RGBA icon at startup
+(4×4 supersampling, rounded board and accent mark) for
+`ViewportBuilder::with_icon`, so no image file is read at runtime. Four tests
+cover dimensions, transparent corners/opaque surface, the accent mark and
+determinism. `main` takes the first positional argument as a startup document;
+three tests cover positional/option/empty parsing. `EpsilonApp` gained
+`with_startup_file`, which imports `.excalidraw` paths (case-insensitive) and
+natively opens every other path, suppressing the welcome/recovery prompts.
+App tests cover path routing, native load, Excalidraw import and a missing-file
+failure that leaves a usable empty document. The install was exercised only in
+a temporary prefix, not in the user session. Previous verification: 7.1's 258
+tests and log/toast checks, 6.x export pipelines (see their checklists below).
 
 ## Features implemented
 
+- Embedded window icon generated from code (no external image at runtime).
+- Linux packaging: desktop launcher, scalable icon, shared-mime-info types for
+  `.epsilon` and `.excalidraw`, and a user-level `install.sh`.
+- Startup file argument: `.excalidraw` imports, `.epsilon` opens natively, and
+  failures go through the toast/log surface.
 - Working menus (File/Quit, View/theme, Help/About) and toolbar actions.
 - Collapsible/resizable properties panel with section header and empty state.
 - Status bar reports active tool, live pointer coordinates, zoom and grid state.
@@ -468,6 +483,29 @@ window and an actual panic were not exercised:
 
 Status: **pending** — not performed in this environment.
 
+## Manual acceptance checklist — desktop integration (task 7.2)
+
+Automated checks cover icon pixels, CLI parsing, startup load/import/failure,
+desktop-entry validation and MIME-cache mapping in a temporary prefix. The real
+session, icon rendering and file-manager click were not exercised:
+
+- [ ] Run `cargo build --release && ./packaging/install.sh`, then confirm
+  `epsilon` is on `PATH` and launches from the desktop application menu with the
+  Epsilon icon visible (not a generic placeholder).
+- [ ] Confirm the window/task-switcher icon matches `packaging/epsilon.svg` and
+  no external image is needed at runtime.
+- [ ] In the file manager, double-click a `.epsilon` file and confirm the window
+  opens that document with its saved viewport and a clean dirty state.
+- [ ] Double-click a `.excalidraw` scene and confirm it is imported as an unsaved
+  document; skipping unsupported elements is reported as a warning toast.
+- [ ] From a terminal, run `epsilon` with no argument and confirm the welcome
+  panel still appears; run `epsilon /missing/file.epsilon` and confirm the error
+  toast while the app stays usable.
+- [ ] Confirm `.epsilon`/`.excalidraw` no longer associate with another installed
+  application (or that changing the default back is possible).
+
+Status: **pending** — the install was validated in a temporary prefix only.
+
 ## Known issues / limitations
 
 - Edit contains Undo/Redo, Cut/Copy/Paste, Select All, Duplicate, Delete, Group,
@@ -514,6 +552,10 @@ Status: **pending** — not performed in this environment.
   missed error is also available in `<app data>/logs/epsilon.log`. There is no
   in-app log viewer or configurable log level/retention beyond the constants in
   `logging.rs`.
+- Desktop integration was verified in a temporary `PREFIX`: entry validation,
+  MIME cache and launch with a file argument. The icon was not viewed, and no
+  real file-manager double-click or application-menu launch was performed. A
+  `*.excalidraw` association overrides any existing default on install.
 - No CI; local verification only. No visual/screenshot review performed.
 - Window/panel restore relies on eframe/egui and was not re-measured under niri.
 - Project license: GPL-3.0 (`LICENSE`); manifests declare `GPL-3.0-only`.
@@ -522,8 +564,7 @@ Status: **pending** — not performed in this environment.
 
 1. Read `AGENTS.md`, `project/ROADMAP.md`, this file, `project/DECISIONS.md`.
 2. `git status` must be clean; run `cargo test --workspace` for the baseline.
-3. Start with the first incomplete task, 7.2 — Icon, desktop entry and file
-   associations.
+3. Start with the first incomplete task, 7.3 — Performance profiling.
 4. Verify format, clippy, tests, build, and `timeout 8 ./target/debug/epsilon`.
 5. Update this file, `ROADMAP.md`, `CHANGELOG.md`, then commit and push.
 

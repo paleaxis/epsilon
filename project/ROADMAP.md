@@ -852,13 +852,27 @@ No telemetry or network code exists; production code has no `unwrap`/`expect` on
 user input or file contents. Forced save/open failures produce actionable
 messages and log entries; success paths log written/read paths.
 
-### [ ] 7.2 — Icon, desktop entry, file associations
+### [x] 7.2 — Icon, desktop entry, file associations
 
 Embedded window icon, `.desktop` launcher, `.epsilon`/`.excalidraw` associations,
 CLI argument to open a file.
 
 Acceptance: installed launcher starts app; opening a file from the file manager
 loads it; icon embedded (no external asset at runtime).
+
+Completed 2026-11-27: the window icon is rasterized at startup by
+`crates/epsilon-app/src/icon.rs` (rounded board plus an epsilon mark) and passed
+to `ViewportBuilder::with_icon`, so no image file is read at runtime. A first
+positional CLI argument is opened after construction: `.excalidraw` goes through
+the importer, every other path through the native reader; failures use the
+normal toast/log surface. `packaging/` holds the `epsilon.desktop` entry, a
+matching scalable `epsilon.svg`, a shared-mime-info file registering
+`application/x-epsilon` (`*.epsilon`) and `application/vnd.excalidraw+json`
+(`*.excalidraw`), and `install.sh` for a user-level install. Verification
+installed into a temporary prefix: the desktop entry validates with no
+diagnostics, both MIME types map to `epsilon.desktop`, and the installed
+command launched, imported the Excalidraw fixture and logged the read path
+(exit 124 under `timeout`).
 
 ### [ ] 7.3 — Performance profiling
 

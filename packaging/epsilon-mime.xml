@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <mime-type type="application/x-epsilon">
+    <comment>Epsilon whiteboard document</comment>
+    <icon name="epsilon"/>
+    <glob pattern="*.epsilon"/>
+  </mime-type>
+  <mime-type type="application/vnd.excalidraw+json">
+    <comment>Excalidraw scene</comment>
+    <glob pattern="*.excalidraw"/>
+  </mime-type>
+</mime-info>
