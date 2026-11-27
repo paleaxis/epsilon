@@ -4,6 +4,12 @@ Notable changes, newest first. Version sections are added at release time.
 
 ## [Unreleased]
 
+### Added — 2026-11-27 (task 7.5, in progress)
+
+- `project/RELEASE_NOTES_v0.1.0.md` drafts the v0.1.0 release checklist with
+  automated items marked as verified and manual GUI/cross-session items as
+  pending; the tag is not created yet.
+
 ### Added — 2026-11-27 (task 7.4)
 
 - `packaging/release.sh` builds the release profile with `--locked` and writes

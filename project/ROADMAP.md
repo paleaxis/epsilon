@@ -913,9 +913,17 @@ requirements (OpenGL 3.3+, Wayland/X11, XDG portal) and the fact that the
 binary is dynamically linked and not static. Values are in `PROJECT_STATE.md`;
 other distributions/architectures and a portal-less session remain manual.
 
-### [ ] 7.5 — Final usability verification and v0.1.0
+### [~] 7.5 — Final usability verification and v0.1.0
 
 End-to-end whiteboard checklist (draw/edit/save/open/export), keyboard-only pass,
 error recovery; tag v0.1.0 when all items pass.
 
 Acceptance: checklist attached to release notes; no open blocker tasks.
+
+Checkpoint 2026-11-27: the automated legs of the checklist pass — full suite
+270/270, tool creation, undo/redo, save/open round trip, PNG/SVG/Excalidraw
+exports, error recovery and shortcut registrations all verified, and eleven
+focused end-to-end tests pass together. `project/RELEASE_NOTES_v0.1.0.md` is
+drafted with each item marked automated or manual. **Not tagged**: the live
+GUI visual pass, native dialogs, keyboard-only walkthrough, portal-less and
+X11-only sessions, and file-manager launch are still unchecked.

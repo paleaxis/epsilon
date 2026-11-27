@@ -1,9 +1,9 @@
 # Project State
 
 Last updated: 2026-11-27
-Current stage: **Stage 7 — Desktop readiness** (7.1–7.4 complete)
+Current stage: **Stage 7 — Desktop readiness** (7.1–7.4 complete; 7.5 in progress)
 Last completed task: **7.4 — Release build and packaging docs**
-Next task: **7.5 — Final usability verification and v0.1.0**
+Current task: **7.5 — Final usability verification and v0.1.0 (automated pass done, not tagged)**
 
 ## Status
 
@@ -74,7 +74,10 @@ off-screen culling cut a 5,000-element frame from ~3.5 ms to ~0.8 ms. Task 7.4
 adds a reproducible release tarball (`packaging/release.sh`), a distribution-
 aware `install.sh`, documented runtime requirements and a binary-size report;
 the packaged binary was launched from a fresh `HOME` and installed from the
-tarball into a temporary prefix.
+tarball into a temporary prefix. Task 7.5's automated end-to-end pass also
+succeeds (270 tests, including an 11-test focused run for draw/edit/save/open/
+export/error recovery), but `v0.1.0` is deliberately not tagged while the live
+GUI and cross-session checks remain manual.
 
 Repository layout:
 
@@ -373,6 +376,32 @@ kernel, GPU, Mesa stack, desktop portal and Wayland compositor; it has no prior
 Epsilon settings or data. A different distribution/architecture, a machine
 without a portal, and an X11-only session were not exercised. See the manual
 checklist below.
+
+## Final verification checkpoint (task 7.5, in progress)
+
+The full suite passes (270 tests, 1 ignored harness), and these focused
+automated end-to-end tests pass together:
+`every_drawing_tool_creation_is_undoable`,
+`mixed_stage_three_edits_undo_and_redo_exactly`,
+`save_and_open_round_trip_updates_dirty_state`,
+`png_export_writes_a_decodable_image`,
+`excalidraw_export_writes_a_readable_scene`,
+`open_errors_leave_the_current_document_untouched`,
+`failed_save_reports_the_error_and_keeps_the_document_dirty`,
+`autosave_is_offered_and_recovered_after_a_crash`,
+`keyboard_shortcuts_select_tools`, `edit_shortcuts_are_registered` and
+`file_shortcuts_are_registered` (11/11). Together with the export, group,
+order, clipboard, recovery and packaging checks elsewhere in this file, the
+draw → edit → save → open → export → recover flow is covered without a window.
+`project/RELEASE_NOTES_v0.1.0.md` holds the checklist and marks every item as
+automated or manual.
+
+**v0.1.0 is not tagged.** The remaining items need a human in a live session:
+visual draw/edit inspection, native Open/Save/Export dialogs and overwrite
+prompt, keyboard-only walkthrough, HiDPI, PNG/SVG visual comparison, Excalidraw
+round trip in a browser, clipboard image into an external editor, a portal-less
+session, an X11-only session, and launching from a real desktop install. Do not
+tag until those are ticked or accepted as limitations in this file.
 
 ## Features implemented
 
@@ -746,7 +775,8 @@ Status: **pending** — only this host with a clean `HOME` was used.
 
 1. Read `AGENTS.md`, `project/ROADMAP.md`, this file, `project/DECISIONS.md`.
 2. `git status` must be clean; run `cargo test --workspace` for the baseline.
-3. Start with the first incomplete task, 7.5 — Final usability verification and v0.1.0.
+3. Task 7.5 is in progress: run the manual items in
+   `project/RELEASE_NOTES_v0.1.0.md`, tick or document them, then tag `v0.1.0`.
 4. Verify format, clippy, tests, build, and `timeout 8 ./target/debug/epsilon`.
 5. Update this file, `ROADMAP.md`, `CHANGELOG.md`, then commit and push.
 
